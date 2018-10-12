@@ -10,6 +10,11 @@
 #include <thread>
 #include <vector>
 #include <iostream>
+//#include "SoyGif.h"
+
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
 
 class TImageSampler
 {
@@ -35,14 +40,27 @@ uint8_t TImageBuffer::GetPixel(float u,float v)
 	auto* Bytes = GetBytes();
 	auto Channels = GetChannelCount();
 	
-	auto GetPx0 = [&](int x,int y)
+	auto GetPx0 = [=](int x,int y)
 	{
 		auto PixelIndex = x + (y * w);
 		auto* Pixel = &Bytes[PixelIndex * Channels];
-		return Pixel[0];
+		
+		//	get luma
+		float Luma = 0;
+		for ( int c=0;	c<std::min(3,Channels);	c++)
+			Luma += Pixel[c] / 255.0f;
+		Luma /= std::min(3,Channels);
+		
+		if ( Luma < 0.1f )
+		return 0;
+		if ( Luma < 0.7f )
+		return 2;
+		return 1;
 	};
 	auto x = w * u;
 	auto y = h * v;
+	x = std::min<int>( x, w-1 );
+	y = std::min<int>( y, h-1 );
 	return GetPx0(x,y);
 }
 
@@ -68,15 +86,52 @@ public:
 };
 
 
+class TImageBufferGif : public TImageBuffer
+{
+public:
+	TImageBufferGif(const std::vector<uint8_t>& GifData);
+	~TImageBufferGif();
+	
+	virtual int				GetWidth() override	 {	return mWidth;	}
+	virtual int				GetHeight() override	 {	return mHeight;	}
+	virtual int				GetChannelCount() override	{	return mChannels;	}
+	virtual const uint8_t*	GetBytes() override	{	return mPixels;	}
+	
+	int			mWidth;
+	int			mHeight;
+	int			mChannels;
+	uint8_t*	mPixels;
+};
+
+
+TImageBufferGif::TImageBufferGif(const std::vector<uint8_t>& GifData)
+{
+	//	desired channels
+	mChannels = 3;
+	mPixels = stbi_load_from_memory( GifData.data(), GifData.size(), &mWidth, &mHeight, &mChannels, mChannels );
+
+	//	test
+	int v = 0;
+	for  ( int x=0;	x<mWidth;	x++)
+	for  ( int x=0;	x<mWidth;	x++)
+	for  ( int x=0;	x<mWidth;	x++)
+	v +=mPixels[ (x + (y * mWidth)) * mChannels]
+}
+
+TImageBufferGif::~TImageBufferGif()
+{
+	stbi_image_free( mPixels );
+}
+
 void RenderCli(TImageSampler& Sampler,int Width,int Height)
 {
 	auto GetPaletteChar = [](uint8_t Colour)
 	{
 		switch (Colour)
 		{
-			case 0:		return ' ';
-			case 1:		return '#';
-			default:	return 'H';
+			case 0:		return '#';
+			case 1:		return ' ';
+			default:	return ':';
 		}
 	};
 	
@@ -144,7 +199,7 @@ int main(int argc, const char * argv[])
 			GifData = Data;
 			Downloaded = true;
 		};
-		GetUrl("https://assets.amuniversal.com/9cde8ef0a4c401365a02005056a9545d",OnDownloaded);
+		GetUrl("https://assets.amuniversal.com/985bb260a4c401365a02005056a9545d",OnDownloaded);
 		
 		while ( !Downloaded )
 		{
@@ -159,8 +214,11 @@ int main(int argc, const char * argv[])
 			1,0,0,1,
 			1,1,1,1
 		};
-		TImageBufferTest Test( 4, 4, Square4x4 );
-		RenderCli( Test, 80, 20 );
+		//TImageBufferTest Test( 4, 4, Square4x4 );
+		//RenderCli( Test, 80, 20 );
+		
+		TImageBufferGif Gif( GifData );
+		RenderCli( Gif, 180, 150*0.30f );
 	}
 	return 0;
 }
