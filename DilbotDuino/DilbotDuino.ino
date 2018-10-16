@@ -1,4 +1,4 @@
-//	using https://codeload.github.com/ZinggJM/GxEPD/zip/master
+//	using https://github.com/ZinggJM/GxEPD/
 //	commit b59ae551a18b8e2dbeeed1bb62f8197e15554be9
 #include <GxEPD.h>
 
@@ -67,6 +67,9 @@ GxEPD_Class display(io /*RST=D4*/ /*BUSY=D2*/); // default selection of D4(=2), 
 #error define a board!
 #endif
 
+String ExtractAndRenderGif(WiFiClient& Client);
+
+
 
 std::function<void()> OnDrawStuffFunc = nullptr;
 
@@ -86,6 +89,7 @@ void DrawStuff(std::function<void()> OnDraw)
 void DebugPrint(const String& Text)
 {
 	Serial.println(Text);
+	/*
 	auto PrintFunc = [&]()
 	{
 		const GFXfont* f = &FreeMonoBold9pt7b;
@@ -97,6 +101,7 @@ void DebugPrint(const String& Text)
 		display.println(Text);
 	};
 	DrawStuff( PrintFunc );
+	*/
 }
 
 
@@ -132,36 +137,63 @@ void setup()
 
 	DebugPrint("Initialised display.");
 
-	auto Ssid = "ZaegerMeister";
-	auto Password = "InTheYear2525";
-	DebugPrint( String("Setting up wifi to ") + Ssid + "/" + Password);
+}
+
+
+void ConnectToWifi(const String& Ssid,const String& Password,std::function<void(const String&)> Debug)
+{
+	Debug( String("Setting up wifi to ") + Ssid + "/" + Password);
 
 	WiFi.persistent(true);
 	WiFi.mode(WIFI_STA); // switch off AP
 	WiFi.setAutoConnect(true);
 	WiFi.setAutoReconnect(true);
 	WiFi.disconnect();
-	WiFi.begin(Ssid, Password);
+	WiFi.begin(Ssid.c_str(), Password.c_str());
 
 	int Attempt=0;
 	do
 	{
 		delay(500);
-		DebugPrint( String("Attempt #") + Attempt + "\nStatus:" + WiFi.status());
+		if ( (Attempt % 10) == 0 )
+			Debug( String("Attempt #") + Attempt + "\nStatus:" + WiFi.status());
 		Attempt++;
 	}
 	while ( WiFi.status() != WL_CONNECTED );
 }
 
-bool drawBitmapFrom_HTTP_ToBuffer(const char* host,const char* path,int16_t x, int16_t y, bool with_color);
-
 
 void loop()
 {
+	if ( WiFi.status() != WL_CONNECTED )
+	{
+		ConnectToWifi( "ZaegerMeister", "InTheYear2525", DebugPrint );
+	}
+	
 	auto* Host = "assets.amuniversal.com";
 	auto* Path = "/a2bb8780a4c401365a02005056a9545d";
 
-	drawBitmapFrom_HTTP_ToBuffer( Host, Path, 0, 0, true );
+	auto OnError = [&](const String& Error)
+	{
+		DebugPrint( Error );
+		auto PrintFunc = [&]()
+		{
+			const GFXfont* f = &FreeMonoBold9pt7b;
+			display.fillScreen(GxEPD_BLACK);
+			display.setTextColor(GxEPD_WHITE);
+			display.setFont(f);
+			display.setCursor(0, 0);
+			display.println();
+			display.println(Error);
+		};
+		DrawStuff( PrintFunc );		
+	};
+	auto OnConnected = [&](WiFiClient& Client)
+	{
+		DebugPrint("Connected!");
+		return String();
+	};
+	FetchHttp( Host, Path, "image/gif", ExtractAndRenderGif, OnError, DebugPrint );
 	delay(100000);
 }
 /*
@@ -188,56 +220,88 @@ void showFontCallback()
 }
 */
 
-bool drawBitmapFrom_HTTP_ToBuffer(const char* host,const char* path,int16_t x, int16_t y, bool with_color)
+void FetchHttp(const char* Host,const char* Path,const char* ExpectedMimeType,std::function<String(WiFiClient&)> OnConnected,std::function<void(const String&)> OnError,std::function<void(const String&)> Debug)
 {
-	WiFiClient client;
-	bool valid = false; // valid format to be handled
-	bool flip = true; // bitmap is stored bottom-to-top
-	uint32_t startTime = millis();
+	WiFiClient Client;
 
-  	DebugPrint(String("Fetching ") + host + path);
+  	Debug(String("Fetching ") + Host + Path);
 	
 #define HTTP_PORT	80
-	if ( !client.connect(host, HTTP_PORT) )
+	if ( !Client.connect(Host, HTTP_PORT) )
 	{
-		DebugPrint("Failed to connect");
-		return false;
+		OnError( String("Failed to connect to ") + Host + HTTP_PORT );
+		return;
 	}
 
-	client.print(String("GET ") + path + " HTTP/1.1\r\n" +
-               "Host: " + host + "\r\n" +
-               "User-Agent: GxEPD2_Spiffs_Loader\r\n" +
+	//	send get request
+	Client.print(String("GET ") + Path + " HTTP/1.1\r\n" +
+               "Host: " + Host + "\r\n" +
+               "User-Agent: Dilbot\r\n" +
                "Connection: close\r\n\r\n");
-	Serial.println("request sent");
 
-	//	got headers?
-	bool connection_ok = false;
+	auto* OkayResponsePrefix = "HTTP/1.1 200";
 
-	//	read
-	while (client.connected())
+	//	read response
 	{
-		//	stop nodemcu timeouts
-		delay(1);
-		
-		String line = client.readStringUntil('\n');
-		if (!connection_ok)
+		auto ResponseLine = Client.readStringUntil('\n');
+		if ( !ResponseLine.startsWith(OkayResponsePrefix) )
 		{
-			connection_ok = line.startsWith("HTTP/1.1 200 OK");
-			Serial.println(line);
+			OnError( String("First header response not ") + OkayResponsePrefix + ": " + ResponseLine );
+			return;
 		}
-		if (line == "\r")
+	}
+
+	//	read headers
+	const char* ResponseKey = "HTTP/1.1 ";
+	String ResponseValue;
+	const char* ContentTypeKey = "Content-Type: ";
+	const char* HeaderTailKey = "\r";
+	String ContentTypeValue;
+
+	while ( true )
+	{
+		if ( !Client.connected() )
 		{
-			Serial.println("headers received");
+			OnError("Client lost connection");
+			return;
+		}
+
+		//	read next header
+		auto ResponseLine = Client.readStringUntil('\n');
+		ResponseLine.replace('\r',' ');
+		ResponseLine.replace('\n',' ');
+		ResponseLine.trim();
+		if ( ResponseLine.length() == 0 )
 			break;
-		}
-		Serial.println(line);
+
+		if ( ResponseLine.startsWith(ContentTypeKey) )
+		{
+			ContentTypeValue = ResponseLine.substring( strlen(ContentTypeKey) );
+			
+			if ( ExpectedMimeType != nullptr )
+			{
+				if ( ContentTypeValue != ExpectedMimeType )
+				{
+					OnError( String("Content type is ") + ContentTypeValue + " not " + ExpectedMimeType );
+					return;
+				}
+			}
+		}			
 	}
 
-	if (!connection_ok) 
+	//	process content
+	auto Error = OnConnected( Client );
+	if ( Error.length() > 0 )
 	{
-		DebugPrint("Failed to get headers");
-		return false;
+		OnError( Error );
 	}
+}
+
+String ExtractAndRenderGif(WiFiClient& Client)
+{
+	return "Render a gif!";
+}
+
 	/*
   // Parse BMP header
   if (read16(client) == 0x4D42) // BMP signature
@@ -417,6 +481,3 @@ bool drawBitmapFrom_HTTP_ToBuffer(const char* host,const char* path,int16_t x, i
     Serial.println("bitmap format not handled.");
   }
   */
-
-  return true;
-}
