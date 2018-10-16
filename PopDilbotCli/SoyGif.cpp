@@ -85,6 +85,186 @@ void Gif::THeader::ParseNextBlock(std::function<bool(uint8_t*,int)> ReadBytes,st
 	}
 }
 
+
+class LzwDecoder
+{
+public:
+	LzwDecoder(std::function<bool(uint8_t*,int)> ReadBlock) :
+		readIntoBuffer	( ReadBlock )
+	{
+		
+	}
+	
+	// LZW variables
+	int bbits;
+	int bbuf;
+	int cursize;                // The current code size
+	int curmask;
+	int codesize;
+	int clear_code;
+	int end_code;
+	int newcodes;               // First available code
+	int top_slot;               // Highest code for current size
+	int extra_slot;
+	int slot;                   // Last read code
+	int fc, oc;
+	int bs;                     // Current buffer size for GIF
+	int bcnt;
+	uint8_t *sp;
+	 uint8_t temp_buffer[260];
+	//uint8_t * temp_buffer;
+	
+	// Masks for 0 .. 16 bits
+	unsigned int mask[17] = {
+		0x0000, 0x0001, 0x0003, 0x0007,
+		0x000F, 0x001F, 0x003F, 0x007F,
+		0x00FF, 0x01FF, 0x03FF, 0x07FF,
+		0x0FFF, 0x1FFF, 0x3FFF, 0x7FFF,
+		0xFFFF
+	};
+#define lzwMaxBits	12
+	#define LZW_SIZTABLE  (1 << lzwMaxBits)
+	uint8_t stack  [LZW_SIZTABLE];
+	uint8_t suffix [LZW_SIZTABLE];
+	uint16_t prefix [LZW_SIZTABLE];
+	
+	void 	Init(int csize);
+	int		get_code();
+	int 	decode(uint8_t *buf, int len, uint8_t *bufend);
+	
+	std::function<bool(uint8_t*,int)>	readIntoBuffer;
+};
+
+void LzwDecoder::Init(int csize)
+{
+	// Initialize read buffer variables
+	bbuf = 0;
+	bbits = 0;
+	bs = 0;
+	bcnt = 0;
+	
+	// Initialize decoder variables
+	codesize = csize;
+	cursize = codesize + 1;
+	curmask = mask[cursize];
+	top_slot = 1 << cursize;
+	clear_code = 1 << codesize;
+	end_code = clear_code + 1;
+	slot = newcodes = clear_code + 2;
+	oc = fc = -1;
+	sp = stack;
+}
+
+//  Get one code of given number of bits from stream
+int LzwDecoder::get_code()
+{
+	while (bbits < cursize) {
+		if (bcnt == bs) {
+			// get number of bytes in next block
+			readIntoBuffer(temp_buffer, 1);
+			bs = temp_buffer[0];
+			readIntoBuffer(temp_buffer, bs);
+			bcnt = 0;
+		}
+		bbuf |= temp_buffer[bcnt] << bbits;
+		bbits += 8;
+		bcnt++;
+	}
+	int c = bbuf;
+	bbuf >>= cursize;
+	bbits -= cursize;
+	return c & curmask;
+}
+
+
+// Decode given number of bytes
+//   buf 8 bit output buffer
+//   len number of pixels to decode
+//   returns the number of bytes decoded
+int LzwDecoder::decode(uint8_t *buf, int len, uint8_t *bufend)
+{
+	int l, c, code;
+	
+#if LZWDEBUG == 1
+	unsigned char debugMessagePrinted = 0;
+#endif
+	
+	if (end_code < 0) {
+		return 0;
+	}
+	l = len;
+	
+	for (;;) {
+		while (sp > stack) {
+			// load buf with data if we're still within bounds
+			if(buf < bufend) {
+				*buf++ = *(--sp);
+			} else {
+				// out of bounds, keep incrementing the pointers, but don't use the data
+#if LZWDEBUG == 1
+				// only print this message once per call to lzw_decode
+				if(buf == bufend)
+					Serial.println("****** LZW imageData buffer overrun *******");
+#endif
+			}
+			if ((--l) == 0) {
+				return len;
+			}
+		}
+		c = get_code();
+		if (c == end_code) {
+			break;
+			
+		}
+		else if (c == clear_code) {
+			cursize = codesize + 1;
+			curmask = mask[cursize];
+			slot = newcodes;
+			top_slot = 1 << cursize;
+			fc= oc= -1;
+			
+		}
+		else    {
+			
+			code = c;
+			if ((code == slot) && (fc >= 0)) {
+				*sp++ = fc;
+				code = oc;
+			}
+			else if (code >= slot) {
+				break;
+			}
+			while (code >= newcodes) {
+				*sp++ = suffix[code];
+				code = prefix[code];
+			}
+			*sp++ = code;
+			if ((slot < top_slot) && (oc >= 0)) {
+				suffix[slot] = code;
+				prefix[slot++] = oc;
+			}
+			fc = code;
+			oc = c;
+			if (slot >= top_slot) {
+				if (cursize < lzwMaxBits) {
+					top_slot <<= 1;
+					curmask = mask[++cursize];
+				} else {
+#if LZWDEBUG == 1
+					if(!debugMessagePrinted) {
+						debugMessagePrinted = 1;
+						Serial.println("****** cursize >= lzwMaxBits *******");
+					}
+#endif
+				}
+				
+			}
+		}
+	}
+	end_code = -1;
+	return len - l;
+}
+
 void Gif::THeader::ParseImageBlock(std::function<bool(uint8_t*,int)> ReadBytes,std::function<void(const char*)> OnError,std::function<void(const TImageBlock&)> OnImageBlock)
 {
 	uint8_t HeaderBytes[9];
@@ -108,13 +288,19 @@ void Gif::THeader::ParseImageBlock(std::function<bool(uint8_t*,int)> ReadBytes,s
 	auto PaletteSize = (Flags >> 0) & BITCOUNT(3);
 	PaletteSize = 2 << (PaletteSize);
 	
+	if ( Interlacted )
+	{
+		OnError("Interlaced gif not supported");
+		return;
+	}
+	
 	//	read palette
 	if ( HasLocalPalette && PaletteSize == 0 )
 	{
 		OnError("Flagged as having a global palette size, and palette size is 0");
 		return;
 	}
-		
+	
 	TRgb8 LocalPalette[256];
 	auto* LocalPalette8 = &LocalPalette[0].r;
 	if ( !ReadBytes( LocalPalette8, sizeof(TRgb8) * PaletteSize ) )
@@ -126,6 +312,7 @@ void Gif::THeader::ParseImageBlock(std::function<bool(uint8_t*,int)> ReadBytes,s
 	uint8_t LzwMinimumCodeSize;
 	ReadBytes( &LzwMinimumCodeSize, 1 );
 	
+	//	https://github.com/pixelmatix/AnimatedGIFs/blob/master/GifDecoder_Impl.h#L557
 	//	read lzw blocks
 	while ( true )
 	{
@@ -142,8 +329,144 @@ void Gif::THeader::ParseImageBlock(std::function<bool(uint8_t*,int)> ReadBytes,s
 		}
 	}
 	
+	uint8_t Image[Block.mWidth*Block.mHeight];
+	
+	LzwDecoder Decoder(ReadBytes);
+	Decoder.Init(LzwMinimumCodeSize);
+	// Decode the non interlaced LZW data into the image data buffer
+	for (auto y=Block.mTop;	y<Block.mTop+Block.mHeight;	y++)
+	{
+		//int lzw_decode(uint8_t *buf, int len, uint8_t *bufend);
+		auto x = Block.mLeft;
+		//lzw_decode( imageData + (y * maxGifWidth) + x, Block.mWidth, imageData + sizeof(imageData) );
+		Decoder.decode( Image, Block.mWidth, Image+sizeof(Image) );
+	}
+	
 }
 
+/*
+static void stbi__out_gif_code(stbi__gif *g, stbi__uint16 code)
+{
+	stbi_uc *p, *c;
+	int idx;
+	
+	// recurse to decode the prefixes, since the linked-list is backwards,
+	// and working backwards through an interleaved image would be nasty
+	if (g->codes[code].prefix >= 0)
+		stbi__out_gif_code(g, g->codes[code].prefix);
+	
+	if (g->cur_y >= g->max_y) return;
+	
+	idx = g->cur_x + g->cur_y;
+	p = &g->out[idx];
+	g->history[idx / 4] = 1;
+	
+	c = &g->color_table[g->codes[code].suffix * 4];
+	if (c[3] > 128) { // don't render transparent pixels;
+		p[0] = c[2];
+		p[1] = c[1];
+		p[2] = c[0];
+		p[3] = c[3];
+	}
+	g->cur_x += 4;
+	
+	if (g->cur_x >= g->max_x) {
+		g->cur_x = g->start_x;
+		g->cur_y += g->step;
+		
+		while (g->cur_y >= g->max_y && g->parse > 0) {
+			g->step = (1 << g->parse) * g->line_size;
+			g->cur_y = g->start_y + (g->step >> 1);
+			--g->parse;
+		}
+	}
+}
+
+void parselzw()
+{
+	stbi_uc lzw_cs;
+	stbi__int32 len, init_code;
+	stbi__uint32 first;
+	stbi__int32 codesize, codemask, avail, oldcode, bits, valid_bits, clear;
+	stbi__gif_lzw *p;
+	
+	lzw_cs = stbi__get8(s);
+	if (lzw_cs > 12) return NULL;
+	clear = 1 << lzw_cs;
+	first = 1;
+	codesize = lzw_cs + 1;
+	codemask = (1 << codesize) - 1;
+	bits = 0;
+	valid_bits = 0;
+	for (init_code = 0; init_code < clear; init_code++) {
+		g->codes[init_code].prefix = -1;
+		g->codes[init_code].first = (stbi_uc) init_code;
+		g->codes[init_code].suffix = (stbi_uc) init_code;
+	}
+	
+	// support no starting clear code
+	avail = clear+2;
+	oldcode = -1;
+	
+	len = 0;
+	for(;;) {
+		if (valid_bits < codesize) {
+			if (len == 0) {
+				len = stbi__get8(s); // start new block
+				if (len == 0)
+					return g->out;
+			}
+			--len;
+			bits |= (stbi__int32) stbi__get8(s) << valid_bits;
+			valid_bits += 8;
+		} else {
+			stbi__int32 code = bits & codemask;
+			bits >>= codesize;
+			valid_bits -= codesize;
+			// @OPTIMIZE: is there some way we can accelerate the non-clear path?
+			if (code == clear) {  // clear code
+				codesize = lzw_cs + 1;
+				codemask = (1 << codesize) - 1;
+				avail = clear + 2;
+				oldcode = -1;
+				first = 0;
+			} else if (code == clear + 1) { // end of stream code
+				stbi__skip(s, len);
+				while ((len = stbi__get8(s)) > 0)
+					stbi__skip(s,len);
+					return g->out;
+			} else if (code <= avail) {
+				if (first) {
+					return stbi__errpuc("no clear code", "Corrupt GIF");
+				}
+				
+				if (oldcode >= 0) {
+					p = &g->codes[avail++];
+					if (avail > 8192) {
+						return stbi__errpuc("too many codes", "Corrupt GIF");
+					}
+					
+					p->prefix = (stbi__int16) oldcode;
+					p->first = g->codes[oldcode].first;
+					p->suffix = (code == avail) ? p->first : g->codes[code].first;
+				} else if (code == avail)
+					return stbi__errpuc("illegal code in raster", "Corrupt GIF");
+					
+					stbi__out_gif_code(g, (stbi__uint16) code);
+					
+					if ((avail & codemask) == 0 && avail <= 0x0FFF) {
+						codesize++;
+						codemask = (1 << codesize) - 1;
+					}
+				
+				oldcode = code;
+			} else {
+				return stbi__errpuc("illegal code in raster", "Corrupt GIF");
+			}
+		}
+	}
+}
+*/
 #include <iostream>
 
 void Gif::THeader::ParseExtensionBlock(std::function<bool(uint8_t*,int)> ReadBytes,std::function<void(const char*)> OnError,std::function<void()> OnGraphicControlBlock,std::function<void()> OnCommentBlock)
