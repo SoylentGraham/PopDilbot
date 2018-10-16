@@ -10,7 +10,7 @@
 #include <thread>
 #include <vector>
 #include <iostream>
-//#include "SoyGif.h"
+#include "SoyGif.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -110,12 +110,64 @@ TImageBufferGif::TImageBufferGif(const std::vector<uint8_t>& GifData)
 	mChannels = 3;
 	mPixels = stbi_load_from_memory( GifData.data(), GifData.size(), &mWidth, &mHeight, &mChannels, mChannels );
 
+
+	size_t BytesRead = 0;
+	auto ReadBytes = [&](uint8_t* Buffer,int BufferSize)
+	{
+		//	unpop
+		if ( BufferSize < 0 )
+		{
+			BytesRead += BufferSize;
+			return true;
+		}
+		if ( BytesRead + BufferSize > GifData.size() )
+			return false;
+		
+		//	walking over data if null
+		if ( Buffer != nullptr )
+		{
+			for ( int i=0;	i<BufferSize;	i++ )
+			{
+				Buffer[i] = GifData[BytesRead+i];
+			}
+		}
+		BytesRead += BufferSize;
+		return true;
+	};
+	
+	auto OnError = [&](const char* Error)
+	{
+		std::cout << Error << std::endl;
+		throw std::runtime_error(Error);
+	};
+	
+	Gif::THeader Header( ReadBytes, OnError );
+	std::cout << "read gif " << Header.mWidth << "x" << Header.mHeight << std::endl;
+
+	auto OnGraphicControlBlock = []
+	{
+	};
+	auto OnCommentBlock = []
+	{
+	};
+	auto OnImageBlock = [](const TImageBlock& ImageBlock)
+	{
+	};
+	
+	while ( BytesRead < GifData.size() )
+	{
+		Header.ParseNextBlock( ReadBytes, OnError, OnGraphicControlBlock, OnCommentBlock, OnImageBlock );
+	}
+	
+	/*
+/*
 	//	test
 	int v = 0;
 	for  ( int x=0;	x<mWidth;	x++)
 	for  ( int x=0;	x<mWidth;	x++)
 	for  ( int x=0;	x<mWidth;	x++)
 	v +=mPixels[ (x + (y * mWidth)) * mChannels]
+ */
 }
 
 TImageBufferGif::~TImageBufferGif()

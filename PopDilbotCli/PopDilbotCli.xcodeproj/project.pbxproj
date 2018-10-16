@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		BF806F0B216FE09200782D8C /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = BF806F0A216FE09200782D8C /* main.mm */; };
+		BFA0154921765A8D00D996F1 /* SoyGif.cpp in Sources */ = {isa = PBXBuildFile; fileRef = BF806F142170005D00782D8C /* SoyGif.cpp */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -116,6 +117,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BFA0154921765A8D00D996F1 /* SoyGif.cpp in Sources */,
 				BF806F0B216FE09200782D8C /* main.mm in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
