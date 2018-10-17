@@ -333,8 +333,8 @@ void DrawImageBlock(const TImageBlock& ImageBlock,std::function<void(const Strin
 		OnDebug( Debug );
 	}
 
-	if ( ImageBlock.mTop % 4 != 0 )
-		return;
+	//if ( ImageBlock.mTop % 4 != 0 )
+	//	return;
 
 	bool UsingRotation = true;
 	auto CurrentX = ImageBlock.mLeft;
@@ -350,7 +350,8 @@ void DrawImageBlock(const TImageBlock& ImageBlock,std::function<void(const Strin
 			display.drawPixel( CurrentX, CurrentY, GxEPD_RED );
 		else
 			display.drawPixel( CurrentX, CurrentY, GxEPD_BLACK );
-		display.drawPixel( CurrentX, CurrentY, GxEPD_RED );
+		
+		//OnDebug( String("DrawPixel(") + IntToString(CurrentX) + "," + IntToString(CurrentY) );
 		CurrentX++;
 	};
 	//	subsampler
@@ -393,10 +394,12 @@ void DrawImageBlock(const TImageBlock& ImageBlock,std::function<void(const Strin
 		rgba.a = 1;
 		DrawColor( rgba );
 	};
-	auto SubSample = 4;
-	auto Width = std::min<int>( ImageBlock.mWidth, display.width()*SubSample );
-	for ( int x=0;	x<Width;	x+=SubSample )
+	auto SubSample = 2;
+	auto Width = std::min<int>( ImageBlock.mWidth/SubSample, display.width() );
+	for ( int x=0;	x<Width-SubSample;	x+=SubSample )
 	{
+		//	try and avoid WDT timeout (wifi chip)
+		delay(1);
 		auto x0 = ImageBlock.mPixels[x+0];
 		auto x1 = ImageBlock.mPixels[x+1];
 		auto x2 = ImageBlock.mPixels[x+2];
@@ -411,7 +414,7 @@ void DrawImageBlock(const TImageBlock& ImageBlock,std::function<void(const Strin
 		else if ( SubSample == 4 )
 			DrawColor4( x0, x1, x2, x3 );
 	}
-	display.updateWindow( ImageBlock.mLeft, ImageBlock.mTop, ImageBlock.mWidth, ImageBlock.mHeight, UsingRotation );
+	//display.updateWindow( ImageBlock.mLeft, ImageBlock.mTop, ImageBlock.mWidth, ImageBlock.mHeight, UsingRotation );
 }
 
 String ExtractAndRenderGif(WiFiClient& Client,bool IsContentChunked,std::function<void(const String&)> OnError,std::function<void(const String&)> OnDebug)
@@ -549,7 +552,6 @@ String ExtractAndRenderGif(WiFiClient& Client,bool IsContentChunked,std::functio
 
 	auto DrawBlock = [&](const TImageBlock& ImageBlock)
 	{
-		OnDebug("Draw block");
 		DrawImageBlock( ImageBlock, OnDebug );
 	};
 	

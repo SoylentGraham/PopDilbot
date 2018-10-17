@@ -148,7 +148,7 @@ bool Gif::THeader::ParseNextBlock(TCallbacks& Callbacks,std::function<void()> On
 	
 	if ( Terminator != 0 )
 	{
-		OnError("Block terminator not zero");
+		//OnError("Block terminator not zero");
 		return false;
 	}
 	
@@ -423,13 +423,18 @@ void Gif::THeader::ParseImageBlock(TCallbacks& Callbacks,std::function<void(cons
 		Rgba.a = Transparent ? 0 : 255;
 		return Rgba;
 	};
-	
+
+	//uint8_t RowData[BlockWidth];
+	uint8_t RowData[1000];
+
+		
 	// Decode the non interlaced LZW data into the image data buffer
 	for (auto y=BlockTop;	y<BlockTop+BlockHeight;	y++)
 	{
 		//int lzw_decode(uint8_t *buf, int len, uint8_t *bufend);
-		uint8_t RowData[BlockWidth];
-		
+
+		if ( y > 3 )
+			break;
 		//lzw_decode( imageData + (y * maxGifWidth) + x, Block.mWidth, imageData + sizeof(imageData) );
 		auto DecodedCount = Decoder.decode( RowData, BlockWidth, RowData+sizeof(RowData) );
 		
