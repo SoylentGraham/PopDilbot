@@ -3,8 +3,6 @@
 
 void Gif::ParseGif(TCallbacks& Callbacks,std::function<void(const TImageBlock&)> DrawPixels)
 {
-	auto& OnDebug = Callbacks.OnDebug;
-	
 	Gif::THeader Header( Callbacks );
 		
 	auto OnGraphicControlBlock = []
@@ -58,13 +56,13 @@ Gif::THeader::THeader(TCallbacks& Callbacks)
 	auto Flags = HeaderBytes[10];
 #define BITCOUNT(N)	( (1<<(N))-1 )
 	auto HasPalette = (Flags >> 7) & BITCOUNT(1);
-	auto ColourRes = (Flags >> 6) & BITCOUNT(3);
-	auto SortPalette = (Flags >> 3) & BITCOUNT(1);
+	//auto ColourRes = (Flags >> 6) & BITCOUNT(3);
+	//auto SortPalette = (Flags >> 3) & BITCOUNT(1);
 	mPaletteSize = (Flags >> 0) & BITCOUNT(3);
 	mPaletteSize = 2 << (mPaletteSize);	//	2 ^ (1+N)
 	
 	mTransparentPaletteIndex = HeaderBytes[11];
-	auto AspectRatio = HeaderBytes[12];
+	//auto AspectRatio = HeaderBytes[12];
 
 	//	read palette
 	if ( HasPalette && mPaletteSize == 0 )
@@ -80,11 +78,11 @@ Gif::THeader::THeader(TCallbacks& Callbacks)
 
 	{
 		String Debug = "Gif ";
-		Debug += IntToString( mWidth );
+		Debug += IntToString( static_cast<int>(mWidth) );
 		Debug += "x";
-		Debug += IntToString( mHeight );
+		Debug += IntToString( static_cast<int>(mHeight) );
 		Debug += ". Global palette size: ";
-		Debug += IntToString( mPaletteSize );
+		Debug += IntToString( static_cast<int>(mPaletteSize) );
 		OnDebug( Debug );
 	}
 	
@@ -110,6 +108,8 @@ bool Gif::THeader::ParseNextBlock(TCallbacks& Callbacks,std::function<void()> On
 		return false;
 	}
 	
+	bool ReadTerminator = false;
+	
 	switch ( BlockId )
 	{
 		case 0x2c:
@@ -119,7 +119,7 @@ bool Gif::THeader::ParseNextBlock(TCallbacks& Callbacks,std::function<void()> On
 			
 		case 0x21:
 			OnDebug("ParseExtensionBlock"); 
-			ParseExtensionBlock( Callbacks, OnGraphicControlBlock, OnCommentBlock );
+			ParseExtensionBlock( Callbacks, OnGraphicControlBlock, OnCommentBlock, ReadTerminator );
 			break;
 			
 		case 0x3b:
@@ -133,11 +133,19 @@ bool Gif::THeader::ParseNextBlock(TCallbacks& Callbacks,std::function<void()> On
 	}
 
 	uint8_t Terminator = 0xdd;
-	if ( !ReadBytes( &Terminator, 1 ) )
+	if ( ReadTerminator )
 	{
-		OnError("Block terminator missing");
-		return false;
+		Terminator = 0;
 	}
+	else
+	{
+		if ( !ReadBytes( &Terminator, 1 ) )
+		{
+			OnError("Block terminator missing");
+			return false;
+		}
+	}
+	
 	if ( Terminator != 0 )
 	{
 		OnError("Block terminator not zero");
@@ -147,7 +155,6 @@ bool Gif::THeader::ParseNextBlock(TCallbacks& Callbacks,std::function<void()> On
 	//	more data to go
 	return true;
 }
-
 
 class LzwDecoder
 {
@@ -349,8 +356,8 @@ void Gif::THeader::ParseImageBlock(TCallbacks& Callbacks,std::function<void(cons
 	auto Flags = HeaderBytes[8];
 	auto HasLocalPalette = (Flags >> 7) & BITCOUNT(1);
 	auto Interlacted = (Flags >> 6) & BITCOUNT(1);
-	auto SortedPalette = (Flags >> 5) & BITCOUNT(1);
-	auto Reserved = (Flags >> 3) & BITCOUNT(2);
+	//auto SortedPalette = (Flags >> 5) & BITCOUNT(1);
+	//auto Reserved = (Flags >> 3) & BITCOUNT(2);
 	auto PaletteSize = (Flags >> 0) & BITCOUNT(3);
 	PaletteSize = 2 << (PaletteSize);
 	
@@ -430,7 +437,7 @@ void Gif::THeader::ParseImageBlock(TCallbacks& Callbacks,std::function<void(cons
 		TImageBlock Row;
 		Row.mLeft = BlockLeft;
 		Row.mTop = BlockTop;
-		Row.mWidth = BlockWidth;
+		Row.mWidth = DecodedCount;
 		Row.mHeight = 1;
 		Row.mPixels = RowData;
 		Row.GetColour = GetColour;
@@ -440,31 +447,39 @@ void Gif::THeader::ParseImageBlock(TCallbacks& Callbacks,std::function<void(cons
 }
 
 
-void Gif::THeader::ParseExtensionBlock(TCallbacks& Callbacks,std::function<void()> OnGraphicControlBlock,std::function<void()> OnCommentBlock)
+void Gif::THeader::ParseExtensionBlock(TCallbacks& Callbacks,std::function<void()> OnGraphicControlBlock,std::function<void()> OnCommentBlock,bool& ReadTerminator)
 {
 	auto& OnError = Callbacks.OnError;
 	auto& ReadBytes = Callbacks.ReadBytes;
 	
 	//	http://www.onicos.com/staff/iz/formats/gif.html
 	uint8_t Type;	//	label
-	ReadBytes( &Type, 1 );
+	if ( !ReadBytes( &Type, 1 ) )
+	{
+		OnError("Error getting next application type (ood)");
+		return;
+	}
 	
 	//	blocks defined by length
 	while ( true )
 	{
 		uint8_t BlockSize;
-		ReadBytes( &BlockSize, 1 );
+		if ( !ReadBytes( &BlockSize, 1 ) )
+		{
+			OnError("Error getting next application block size (ood)");
+			return;
+		}
 		
 		//	block terminator, unpop!
 		if ( BlockSize == 0 )
 		{
-			ReadBytes(nullptr,-1);
+			ReadTerminator = true;
 			break;
 		}
 		
 		if ( !ReadBytes( nullptr, BlockSize ) )
 		{
-			OnError("Error getting next application block size (ood)");
+			OnError("Error getting next application block data (ood)");
 			return;
 		}
 	}

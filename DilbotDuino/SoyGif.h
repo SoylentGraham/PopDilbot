@@ -53,7 +53,7 @@ public:
 class TCallbacks
 {
 public:
-	std::function<bool(uint8_t*,int)> ReadBytes;
+	std::function<bool(uint8_t*,size_t)> ReadBytes;
 	std::function<void(const String&)> OnError;
 	std::function<void(const String&)> OnDebug;
 };
@@ -69,7 +69,7 @@ public:
 
 private:
 	void		ParseImageBlock(TCallbacks& Callbacks,std::function<void(const TImageBlock&)> OnImageBlock);
-	void		ParseExtensionBlock(TCallbacks& Callbacks,std::function<void()> OnGraphicControlBlock,std::function<void()> OnCommentBlock);
+	void		ParseExtensionBlock(TCallbacks& Callbacks,std::function<void()> OnGraphicControlBlock,std::function<void()> OnCommentBlock,bool& ReadTerminator);
 
 public:
 	TRgb8		mPalette[256];	//	global/default palette

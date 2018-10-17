@@ -18,14 +18,8 @@
 void OutputGif(const std::vector<uint8_t>& GifData)
 {
 	size_t BytesRead = 0;
-	auto ReadBytes = [&](uint8_t* Buffer,int BufferSize)
+	auto ReadBytes = [&](uint8_t* Buffer,size_t BufferSize)
 	{
-		//	unpop
-		if ( BufferSize < 0 )
-		{
-			BytesRead += BufferSize;
-			return true;
-		}
 		if ( BytesRead + BufferSize > GifData.size() )
 			return false;
 		

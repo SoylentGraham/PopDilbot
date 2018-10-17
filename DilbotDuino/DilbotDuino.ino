@@ -264,10 +264,8 @@ void FetchHttp(const char* Host,const char* Path,const char* ExpectedMimeType,st
 	}
 
 	//	read headers
-	const char* ResponseKey = "HTTP/1.1 ";
 	String ResponseValue;
 	const char* ContentTypeKey = "Content-Type: ";
-	const char* HeaderTailKey = "\r";
 	const char* ChunkedEncodingKey = "Transfer-Encoding: chunked";
 	String ContentTypeValue;
 	bool IsChunked = false;
@@ -418,6 +416,7 @@ void DrawImageBlock(const TImageBlock& ImageBlock,std::function<void(const Strin
 
 String ExtractAndRenderGif(WiFiClient& Client,bool IsContentChunked,std::function<void(const String&)> OnError,std::function<void(const String&)> OnDebug)
 {
+	bool FirstChunkHeader = true;
 	int ChunkLength = 0;
 	int BytesRead = 0;
 
@@ -430,28 +429,47 @@ String ExtractAndRenderGif(WiFiClient& Client,bool IsContentChunked,std::functio
 		if ( ChunkLength > 0 )
 			return true;
 
+		//	if not the first header, we need to read the tailing \r\n
+		if ( !FirstChunkHeader )
+		{
+			uint8_t Tailrn[2];
+			if ( Client.readBytes( Tailrn, sizeof(Tailrn) ) != 2 )
+			{
+				OnDebug("Failed to read chunk tail \\r\\n");
+				return false;
+			}
+			if ( Tailrn[0] != '\r' || Tailrn[1] != '\n' )
+			{
+				OnDebug("Chunk tail not \\r\\n");
+				return false;
+			}
+		}
+		FirstChunkHeader = false;
+
 		//	read next chunk size
 		//	<lengthinhex>\r\n
 		ChunkLength = 0;
 
 		while ( true )
 		{
-			auto NextByte = Client.read();
-			if ( NextByte == -1 )
+			uint8_t NextByte;
+			if ( Client.readBytes( &NextByte, 1 ) == 0 )
 			{
-				OnDebug("GetChunkLength nextbyte -1");
+				OnDebug("GetChunkLength nextbyte failed to read");
 				return false;
 			}
 			
 			//	eat trailing \r\n
 			if ( NextByte == '\r' )
 			{
-				NextByte = Client.read();
+				OnDebug("GetChunkLength found \\r");
+				Client.readBytes( &NextByte, 1 );
 				if ( NextByte != '\n' )
 				{
 					OnDebug("GetChunkLength tail not \n");
 					return false;
 				}
+				OnDebug("GetChunkLength found \\n");
 				break;
 			}
 
@@ -464,7 +482,12 @@ String ExtractAndRenderGif(WiFiClient& Client,bool IsContentChunked,std::functio
 				NextByte -= '0';
 			else
 			{
-				OnDebug("GetChunkLength not hex");
+				if ( NextByte == ';' )
+				{
+					OnDebug("Http chunked extensions not supported");
+					return false;	
+				}
+				OnDebug( String("GetChunkLength not hex (decimal: ") + IntToString(NextByte) + ")" );
 				return false;
 			}
 
@@ -481,24 +504,15 @@ String ExtractAndRenderGif(WiFiClient& Client,bool IsContentChunked,std::functio
 		return true;
 	};
 	
-	auto ReadBytes = [&](uint8_t* Buffer,int BufferSize)
+	auto ReadBytes = [&](uint8_t* Buffer,size_t BufferSize)
 	{
-		//	unpop
-		if ( BufferSize < 0 )
-		{
-			BytesRead += BufferSize;
-			ChunkLength += BufferSize;
-			return true;
-		}
-		//if ( BytesRead + BufferSize > GifData.size() )
-		//	return false;
-		
-		for ( int i=0;	i<BufferSize;	i++ )
+		for ( size_t i=0;	i<BufferSize;	i++ )
 		{
 			//	read next byte
 			if ( !EatChunkHeader() )
 				return false;
 
+			//	readBytes does a timeout for us :)
 			uint8_t NextByte;
 			auto ReadCount = Client.readBytes( &NextByte, 1 );
 			if ( ReadCount == 0 )
