@@ -436,7 +436,7 @@ void Gif::THeader::ParseImageBlock(TCallbacks& Callbacks,std::function<void(cons
 		//	output block
 		TImageBlock Row;
 		Row.mLeft = BlockLeft;
-		Row.mTop = BlockTop;
+		Row.mTop = y;
 		Row.mWidth = DecodedCount;
 		Row.mHeight = 1;
 		Row.mPixels = RowData;
