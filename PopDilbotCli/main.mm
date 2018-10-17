@@ -152,20 +152,70 @@ TImageBufferGif::TImageBufferGif(const std::vector<uint8_t>& GifData)
 	};
 	auto OnImageBlock = [](const TImageBlock& ImageBlock)
 	{
+		if ( ImageBlock.mTop % 4 != 0 )
+			return;
 		//	draw colours
-		auto DrawColor = [&](uint8_t ColourIndex)
+		auto DrawColor = [&](TRgba8 Colour)
 		{
-			auto Colour = ImageBlock.GetColour(ColourIndex);
 			auto Luma = std::max( Colour.r, std::max( Colour.g, Colour.b ) );
-			if ( Luma > 120 )
+			if ( Luma > 200 )
 				std::cout << " ";
+			else if ( Luma > 120 )
+				std::cout << ";";
 			else
 				std::cout << "#";
 		};
-		auto Width = std::min<int>( ImageBlock.mWidth, 160 );
-		for ( int x=0;	x<Width;	x++ )
+		//	subsampler
+		auto DrawColor4 = [&](uint8_t a,uint8_t b,uint8_t c,uint8_t d)
 		{
-			DrawColor( ImageBlock.mPixels[x] );
+			auto Coloura = ImageBlock.GetColour(a);
+			auto Colourb = ImageBlock.GetColour(b);
+			auto Colourc = ImageBlock.GetColour(c);
+			auto Colourd = ImageBlock.GetColour(d);
+			//	get an average
+			TRgba8 rgba;
+			rgba.r = (Coloura.r + Colourb.r + Colourc.r + Colourd.r)/4.0f;
+			rgba.g = (Coloura.g + Colourb.g + Colourc.g + Colourd.g)/4.0f;
+			rgba.b = (Coloura.b + Colourb.b + Colourc.b + Colourd.b)/4.0f;
+			rgba.a = 1;
+			DrawColor( rgba );
+		};
+		auto DrawColor3 = [&](uint8_t a,uint8_t b,uint8_t c)
+		{
+			auto Coloura = ImageBlock.GetColour(a);
+			auto Colourb = ImageBlock.GetColour(b);
+			auto Colourc = ImageBlock.GetColour(c);
+			//	get an average
+			TRgba8 rgba;
+			rgba.r = (Coloura.r + Colourb.r + Colourc.r)/3.0f;
+			rgba.g = (Coloura.g + Colourb.g + Colourc.g)/3.0f;
+			rgba.b = (Coloura.b + Colourb.b + Colourc.b)/3.0f;
+			rgba.a = 1;
+			DrawColor( rgba );
+		};
+		auto DrawColor2 = [&](uint8_t a,uint8_t b)
+		{
+			auto Coloura = ImageBlock.GetColour(a);
+			auto Colourb = ImageBlock.GetColour(b);
+			//	get an average
+			TRgba8 rgba;
+			rgba.r = (Coloura.r + Colourb.r)/2.0f;
+			rgba.g = (Coloura.g + Colourb.g)/2.0f;
+			rgba.b = (Coloura.b + Colourb.b)/2.0f;
+			rgba.a = 1;
+			DrawColor( rgba );
+		};
+		auto Width = std::min<int>( ImageBlock.mWidth, 300 );
+		auto SubSample = 3;
+		for ( int x=0;	x<Width;	x+=SubSample )
+		{
+			auto x0 = ImageBlock.mPixels[x+0];
+			auto x1 = ImageBlock.mPixels[x+1];
+			auto x2 = ImageBlock.mPixels[x+2];
+			auto x3 = ImageBlock.mPixels[x+3];
+			//DrawColor4( x0, x1, x2, x3 );
+			DrawColor3( x0, x1, x2 );
+			//DrawColor2( x0, x1 );
 		}
 		std::cout << std::endl;
 	};
