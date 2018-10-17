@@ -28,7 +28,6 @@
 		BF806F0A216FE09200782D8C /* main.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = main.mm; sourceTree = "<group>"; };
 		BF806F142170005D00782D8C /* SoyGif.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = SoyGif.cpp; sourceTree = "<group>"; };
 		BF806F152170005D00782D8C /* SoyGif.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SoyGif.h; sourceTree = "<group>"; };
-		BF806F172170073C00782D8C /* stb_image.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = stb_image.h; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -49,7 +48,6 @@
 				BF806F08216FE09200782D8C /* Products */,
 				BF806F142170005D00782D8C /* SoyGif.cpp */,
 				BF806F152170005D00782D8C /* SoyGif.h */,
-				BF806F172170073C00782D8C /* stb_image.h */,
 			);
 			sourceTree = "<group>";
 		};

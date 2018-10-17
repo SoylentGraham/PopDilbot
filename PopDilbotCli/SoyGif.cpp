@@ -1,8 +1,43 @@
 #include "SoyGif.h"
-#include <iostream>
 
-Gif::THeader::THeader(std::function<bool(uint8_t*,int)> ReadBytes,std::function<void(const char*)> OnError)
+
+void Gif::ParseGif(TCallbacks& Callbacks,std::function<void(const TImageBlock&)> DrawPixels)
 {
+	auto& OnDebug = Callbacks.OnDebug;
+	
+	Gif::THeader Header( Callbacks );
+	{
+		String Debug;
+		Debug += "read gif ";
+		Debug += std::to_string(Header.mWidth);
+		Debug += "x";
+		Debug += std::to_string(Header.mHeight);
+		OnDebug( Debug );
+	}
+	
+	auto OnGraphicControlBlock = []
+	{
+	};
+	auto OnCommentBlock = []
+	{
+	};
+	
+	while ( true )
+	{
+		auto MoreData = Header.ParseNextBlock( Callbacks, OnGraphicControlBlock, OnCommentBlock, DrawPixels );
+		if ( !MoreData )
+			return;
+	}
+	
+}
+
+
+
+Gif::THeader::THeader(TCallbacks& Callbacks)
+{
+	auto& OnError = Callbacks.OnError;
+	auto& ReadBytes = Callbacks.ReadBytes;
+
 	uint8_t HeaderBytes[13];
 	if ( !ReadBytes(HeaderBytes,sizeof(HeaderBytes) ) )
 	{
@@ -45,53 +80,58 @@ Gif::THeader::THeader(std::function<bool(uint8_t*,int)> ReadBytes,std::function<
 	
 	//	read palette
 	auto* Palette8 = &mPalette[0].r;
-	if ( !ReadBytes(Palette8,sizeof(TRgb8)*mPaletteSize ) )
+	if ( !ReadBytes(Palette8, static_cast<int>( sizeof(TRgb8)*mPaletteSize) ) )
 	{
 		OnError("Missing bytes for palette");
 		return;
 	}
 }
 
-void Gif::THeader::ParseNextBlock(std::function<bool(uint8_t*,int)> ReadBytes,std::function<void(const char*)> OnError,std::function<void()> OnGraphicControlBlock,std::function<void()> OnCommentBlock,std::function<void(const TImageBlock&)> OnImageBlock)
+bool Gif::THeader::ParseNextBlock(TCallbacks& Callbacks,std::function<void()> OnGraphicControlBlock,std::function<void()> OnCommentBlock,std::function<void(const TImageBlock&)> OnImageBlock)
 {
+	auto& ReadBytes = Callbacks.ReadBytes;
+	auto& OnError = Callbacks.OnError;
+	
 	uint8_t BlockId;
-	ReadBytes( &BlockId, 1 );
+	if ( !ReadBytes( &BlockId, 1 ) )
+	{
+		OnError("Failed to read block id");
+		return false;
+	}
 	
 	switch ( BlockId )
 	{
 		case 0x2c:
-			ParseImageBlock( ReadBytes, OnError, OnImageBlock );
+			ParseImageBlock( Callbacks, OnImageBlock );
 			break;
 			
 		case 0x21:
-			ParseExtensionBlock( ReadBytes, OnError, OnGraphicControlBlock, OnCommentBlock );
+			ParseExtensionBlock( Callbacks, OnGraphicControlBlock, OnCommentBlock );
 			break;
 			
 		case 0x3b:
-			//	end block, read up all the rest of the bytes
-			while ( true )
-			{
-				if ( !ReadBytes(nullptr,1) )
-					break;
-			}
-			return;
+			//	end block, bail out
+			return false;
 		
 		default:
 			OnError("Unknown block type");
-			return;
+			return false;
 	}
 
 	uint8_t Terminator = 0xdd;
 	if ( !ReadBytes( &Terminator, 1 ) )
 	{
 		OnError("Block terminator missing");
-		return;
+		return false;
 	}
 	if ( Terminator != 0 )
 	{
 		OnError("Block terminator not zero");
-		return;
+		return false;
 	}
+	
+	//	more data to go
+	return true;
 }
 
 
@@ -275,8 +315,11 @@ int LzwDecoder::decode(uint8_t *buf, int len, uint8_t *bufend)
 	return len - l;
 }
 
-void Gif::THeader::ParseImageBlock(std::function<bool(uint8_t*,int)> ReadBytes,std::function<void(const char*)> OnError,std::function<void(const TImageBlock&)> OnImageBlock)
+void Gif::THeader::ParseImageBlock(TCallbacks& Callbacks,std::function<void(const TImageBlock&)> OnImageBlock)
 {
+	auto& ReadBytes = Callbacks.ReadBytes;
+	auto& OnError = Callbacks.OnError;
+
 	uint8_t HeaderBytes[9];
 	if ( !ReadBytes( HeaderBytes, sizeof(HeaderBytes) ) )
 	{
@@ -382,133 +425,12 @@ void Gif::THeader::ParseImageBlock(std::function<bool(uint8_t*,int)> ReadBytes,s
 	
 }
 
-/*
-static void stbi__out_gif_code(stbi__gif *g, stbi__uint16 code)
-{
-	stbi_uc *p, *c;
-	int idx;
-	
-	// recurse to decode the prefixes, since the linked-list is backwards,
-	// and working backwards through an interleaved image would be nasty
-	if (g->codes[code].prefix >= 0)
-		stbi__out_gif_code(g, g->codes[code].prefix);
-	
-	if (g->cur_y >= g->max_y) return;
-	
-	idx = g->cur_x + g->cur_y;
-	p = &g->out[idx];
-	g->history[idx / 4] = 1;
-	
-	c = &g->color_table[g->codes[code].suffix * 4];
-	if (c[3] > 128) { // don't render transparent pixels;
-		p[0] = c[2];
-		p[1] = c[1];
-		p[2] = c[0];
-		p[3] = c[3];
-	}
-	g->cur_x += 4;
-	
-	if (g->cur_x >= g->max_x) {
-		g->cur_x = g->start_x;
-		g->cur_y += g->step;
-		
-		while (g->cur_y >= g->max_y && g->parse > 0) {
-			g->step = (1 << g->parse) * g->line_size;
-			g->cur_y = g->start_y + (g->step >> 1);
-			--g->parse;
-		}
-	}
-}
 
-void parselzw()
+void Gif::THeader::ParseExtensionBlock(TCallbacks& Callbacks,std::function<void()> OnGraphicControlBlock,std::function<void()> OnCommentBlock)
 {
-	stbi_uc lzw_cs;
-	stbi__int32 len, init_code;
-	stbi__uint32 first;
-	stbi__int32 codesize, codemask, avail, oldcode, bits, valid_bits, clear;
-	stbi__gif_lzw *p;
+	auto& OnError = Callbacks.OnError;
+	auto& ReadBytes = Callbacks.ReadBytes;
 	
-	lzw_cs = stbi__get8(s);
-	if (lzw_cs > 12) return NULL;
-	clear = 1 << lzw_cs;
-	first = 1;
-	codesize = lzw_cs + 1;
-	codemask = (1 << codesize) - 1;
-	bits = 0;
-	valid_bits = 0;
-	for (init_code = 0; init_code < clear; init_code++) {
-		g->codes[init_code].prefix = -1;
-		g->codes[init_code].first = (stbi_uc) init_code;
-		g->codes[init_code].suffix = (stbi_uc) init_code;
-	}
-	
-	// support no starting clear code
-	avail = clear+2;
-	oldcode = -1;
-	
-	len = 0;
-	for(;;) {
-		if (valid_bits < codesize) {
-			if (len == 0) {
-				len = stbi__get8(s); // start new block
-				if (len == 0)
-					return g->out;
-			}
-			--len;
-			bits |= (stbi__int32) stbi__get8(s) << valid_bits;
-			valid_bits += 8;
-		} else {
-			stbi__int32 code = bits & codemask;
-			bits >>= codesize;
-			valid_bits -= codesize;
-			// @OPTIMIZE: is there some way we can accelerate the non-clear path?
-			if (code == clear) {  // clear code
-				codesize = lzw_cs + 1;
-				codemask = (1 << codesize) - 1;
-				avail = clear + 2;
-				oldcode = -1;
-				first = 0;
-			} else if (code == clear + 1) { // end of stream code
-				stbi__skip(s, len);
-				while ((len = stbi__get8(s)) > 0)
-					stbi__skip(s,len);
-					return g->out;
-			} else if (code <= avail) {
-				if (first) {
-					return stbi__errpuc("no clear code", "Corrupt GIF");
-				}
-				
-				if (oldcode >= 0) {
-					p = &g->codes[avail++];
-					if (avail > 8192) {
-						return stbi__errpuc("too many codes", "Corrupt GIF");
-					}
-					
-					p->prefix = (stbi__int16) oldcode;
-					p->first = g->codes[oldcode].first;
-					p->suffix = (code == avail) ? p->first : g->codes[code].first;
-				} else if (code == avail)
-					return stbi__errpuc("illegal code in raster", "Corrupt GIF");
-					
-					stbi__out_gif_code(g, (stbi__uint16) code);
-					
-					if ((avail & codemask) == 0 && avail <= 0x0FFF) {
-						codesize++;
-						codemask = (1 << codesize) - 1;
-					}
-				
-				oldcode = code;
-			} else {
-				return stbi__errpuc("illegal code in raster", "Corrupt GIF");
-			}
-		}
-	}
-}
-*/
-#include <iostream>
-
-void Gif::THeader::ParseExtensionBlock(std::function<bool(uint8_t*,int)> ReadBytes,std::function<void(const char*)> OnError,std::function<void()> OnGraphicControlBlock,std::function<void()> OnCommentBlock)
-{
 	//	http://www.onicos.com/staff/iz/formats/gif.html
 	uint8_t Type;	//	label
 	ReadBytes( &Type, 1 );
@@ -532,98 +454,7 @@ void Gif::THeader::ParseExtensionBlock(std::function<bool(uint8_t*,int)> ReadByt
 			return;
 		}
 	}
-/*
-	//	application has a bit of extra data
-	if ( Type == 0xff )
-	{
-		uint8_t ApplicationIdentifier[9];
-		ReadBytes( ApplicationIdentifier, 8 );
-		ApplicationIdentifier[8]=0;
-		uint8_t ApplicationAuthCode[4];
-		ReadBytes( ApplicationAuthCode, 3 );
-		ApplicationAuthCode[3]=0;
-		std::cout << "App extension: " << ApplicationIdentifier << " code: " <<ApplicationAuthCode << std::endl;
-		
-		//	read application data until we find terminator.
-		//	app specific length? nothing explains it; http://www.vurdalakov.net/misc/gif/application-extension
-		auto AppBytesRead = 0;
-		while ( true )
-		{
-			uint8_t AppData;
-			if ( !ReadBytes( &AppData, 1 ) )
-			{
-				OnError("Out of data reading app data");
-				return;
-			}
-			AppBytesRead++;
-			if ( AppBytesRead > 2000 )
-			{
-				OnError("Breaking out of app data loop after 2000 bytes");
-				return;
-			}
-			
-			//	found terminator
-			if ( AppData == 0 )
-			{
-				std::cout << "read " << AppBytesRead << " application data bytes" << std::endl;
-				ReadBytes(nullptr, -1 );
-				break;
-			}
-		}
-	}
-	else
-	{
-		//	skip over data for now
-		ReadBytes( nullptr, BlockSize );
-	}
- */
 }
-
-
-/*
-Gif::THeader::THeader(const uint8_t* Data,size_t DataSize)
-{
-	auto MagicSize = 6;
-	auto DescriptionSize = 7;
-	auto PaletteSize = 256*3;
-	auto TotalSize = MagicSize+DescriptionSize+PaletteSize;
-	if ( DataSize < TotalSize )
-		throw std::underflow_error("Missing data for gif header");
-	auto* MagicData = &Data[0];
-	auto* DescriptionData = &Data[0+MagicSize];
-	auto* PaletteData = &Data[0+MagicSize+DescriptionSize];
-	
-	//	GIFXXX
-	if ( memcmp( "GIF", MagicData, 3 ) != 0 )
-		throw std::underflow_error("gif Magic header mis match");
-	
-	auto Width = Description[0] | (Description[1]<<8);
-	auto Height = Description[2] | (Description[3]<<8);
-	
-	//	decode this byte
-	//	f0 == 2
-	auto Flags = Description[4];
-	auto BackgroundPalIndex = Description[5];
-	//auto Ratio = Description[6];
-
-	auto HasPalette = bool_cast( Flags & bits(7) );
-	//auto ColourResolution = Flags & bits(6,5,4);
-	//auto Sorted = bool_cast( Flags & bits(3) );
-	auto PaletteSize = GetPaletteSize( HasPalette, Flags, bits(0,1,2) );
-	
-	//	read palette
-	BufferArray<Soy::TRgba8,256> Palette;
-	if ( !ReadPalette( GetArrayBridge(Palette), GetArrayBridge(PaletteData), HasPalette ? PaletteSize : 0, BackgroundPalIndex, Buffer ) )
-		return Unpop( TProtocolState::Waiting );
-	
-	mHeader = THeader( Width, Height, GetArrayBridge( Palette ), BackgroundPalIndex );
-	
-	//	success, but didn't generate any packets
-	return TProtocolState::Ignore;
-}
-
-*/
-
 
 
 

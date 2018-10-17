@@ -10,107 +10,13 @@
 #include <thread>
 #include <vector>
 #include <iostream>
+#include <sstream>
 #include "SoyGif.h"
 
-#define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
 
 
-class TImageSampler
+void OutputGif(const std::vector<uint8_t>& GifData)
 {
-public:
-	virtual uint8_t	GetPixel(float u,float v)=0;
-};
-
-class TImageBuffer : public TImageSampler
-{
-public:
-	virtual uint8_t			GetPixel(float u,float v) override;
-	virtual int				GetWidth()=0;
-	virtual int				GetHeight()=0;
-	virtual int				GetChannelCount()=0;
-	virtual const uint8_t*	GetBytes()=0;
-};
-
-
-uint8_t TImageBuffer::GetPixel(float u,float v)
-{
-	auto w = GetWidth();
-	auto h = GetHeight();
-	auto* Bytes = GetBytes();
-	auto Channels = GetChannelCount();
-	
-	auto GetPx0 = [=](int x,int y)
-	{
-		auto PixelIndex = x + (y * w);
-		auto* Pixel = &Bytes[PixelIndex * Channels];
-		
-		//	get luma
-		float Luma = 0;
-		for ( int c=0;	c<std::min(3,Channels);	c++)
-			Luma += Pixel[c] / 255.0f;
-		Luma /= std::min(3,Channels);
-		
-		if ( Luma < 0.1f )
-		return 0;
-		if ( Luma < 0.7f )
-		return 2;
-		return 1;
-	};
-	auto x = w * u;
-	auto y = h * v;
-	x = std::min<int>( x, w-1 );
-	y = std::min<int>( y, h-1 );
-	return GetPx0(x,y);
-}
-
-
-class TImageBufferTest : public TImageBuffer
-{
-public:
-	TImageBufferTest(int Width,int Height,const uint8_t* Pixels) :
-		mPixels	( Pixels ),
-		mWidth	( Width ),
-		mHeight	( Height )
-	{
-	}
-	
-	virtual int				GetWidth() override	 {	return mWidth;	}
-	virtual int				GetHeight() override	 {	return mHeight;	}
-	virtual int				GetChannelCount() override	{	return 1;	}
-	virtual const uint8_t*	GetBytes() override	{	return mPixels;	}
-	
-	const uint8_t*		mPixels;
-	int 				mWidth;
-	int					mHeight;
-};
-
-
-class TImageBufferGif : public TImageBuffer
-{
-public:
-	TImageBufferGif(const std::vector<uint8_t>& GifData);
-	~TImageBufferGif();
-	
-	virtual int				GetWidth() override	 {	return mWidth;	}
-	virtual int				GetHeight() override	 {	return mHeight;	}
-	virtual int				GetChannelCount() override	{	return mChannels;	}
-	virtual const uint8_t*	GetBytes() override	{	return mPixels;	}
-	
-	int			mWidth;
-	int			mHeight;
-	int			mChannels;
-	uint8_t*	mPixels;
-};
-
-
-TImageBufferGif::TImageBufferGif(const std::vector<uint8_t>& GifData)
-{
-	//	desired channels
-	//mChannels = 3;
-	//mPixels = stbi_load_from_memory( GifData.data(), GifData.size(), &mWidth, &mHeight, &mChannels, mChannels );
-
-
 	size_t BytesRead = 0;
 	auto ReadBytes = [&](uint8_t* Buffer,int BufferSize)
 	{
@@ -135,22 +41,24 @@ TImageBufferGif::TImageBufferGif(const std::vector<uint8_t>& GifData)
 		return true;
 	};
 	
-	auto OnError = [&](const char* Error)
+	
+	auto OnDebug = [](const String& Text)
 	{
-		std::cout << Error << std::endl;
-		throw std::runtime_error(Error);
+		std::cout << Text << std::endl;
 	};
 	
-	Gif::THeader Header( ReadBytes, OnError );
-	std::cout << "read gif " << Header.mWidth << "x" << Header.mHeight << std::endl;
-
-	auto OnGraphicControlBlock = []
+	auto OnError = [](const String& Text)
 	{
+		throw std::runtime_error(Text);
 	};
-	auto OnCommentBlock = []
+	
 	{
-	};
-	auto OnImageBlock = [](const TImageBlock& ImageBlock)
+		std::stringstream Debug;
+		Debug << "Downloaded " << GifData.size() << " bytes";
+		OnDebug( Debug.str() );
+	}
+	
+	auto DrawImageBlock = [](const TImageBlock& ImageBlock)
 	{
 		if ( ImageBlock.mTop % 4 != 0 )
 			return;
@@ -205,66 +113,34 @@ TImageBufferGif::TImageBufferGif(const std::vector<uint8_t>& GifData)
 			rgba.a = 1;
 			DrawColor( rgba );
 		};
-		auto Width = std::min<int>( ImageBlock.mWidth, 300 );
-		auto SubSample = 3;
+		auto SubSample = 4;
+		auto Width = std::min<int>( ImageBlock.mWidth, 240*SubSample );
 		for ( int x=0;	x<Width;	x+=SubSample )
 		{
 			auto x0 = ImageBlock.mPixels[x+0];
 			auto x1 = ImageBlock.mPixels[x+1];
 			auto x2 = ImageBlock.mPixels[x+2];
 			auto x3 = ImageBlock.mPixels[x+3];
-			//DrawColor4( x0, x1, x2, x3 );
-			DrawColor3( x0, x1, x2 );
-			//DrawColor2( x0, x1 );
+			
+			if ( SubSample == 1 )
+				DrawColor( ImageBlock.GetColour(x0) );
+			else if ( SubSample == 2 )
+				DrawColor2( x0, x1 );
+			else if ( SubSample == 3 )
+				DrawColor3( x0, x1, x2 );
+			else if ( SubSample == 4 )
+				DrawColor4( x0, x1, x2, x3 );
 		}
 		std::cout << std::endl;
 	};
 	
-	while ( BytesRead < GifData.size() )
-	{
-		Header.ParseNextBlock( ReadBytes, OnError, OnGraphicControlBlock, OnCommentBlock, OnImageBlock );
-	}
 	
-	/*
-/*
-	//	test
-	int v = 0;
-	for  ( int x=0;	x<mWidth;	x++)
-	for  ( int x=0;	x<mWidth;	x++)
-	for  ( int x=0;	x<mWidth;	x++)
-	v +=mPixels[ (x + (y * mWidth)) * mChannels]
- */
-}
-
-TImageBufferGif::~TImageBufferGif()
-{
-	stbi_image_free( mPixels );
-}
-
-void RenderCli(TImageSampler& Sampler,int Width,int Height)
-{
-	auto GetPaletteChar = [](uint8_t Colour)
-	{
-		switch (Colour)
-		{
-			case 0:		return '#';
-			case 1:		return ' ';
-			default:	return ':';
-		}
-	};
+	TCallbacks Callbacks;
+	Callbacks.ReadBytes = ReadBytes;
+	Callbacks.OnError = OnError;
+	Callbacks.OnDebug = OnDebug;
 	
-	for ( int y=0;	y<Height;	y++ )
-	{
-		for ( int x=0;	x<Width;	x++ )
-		{
-			float u = x / (float)Width;
-			float v = y / (float)Height;
-			auto Pixel = Sampler.GetPixel(u,v);
-			auto PixelChar = GetPaletteChar(Pixel);
-			std::cout << PixelChar;
-		}
-		std::cout << std::endl;
-	}
+	Gif::ParseGif( Callbacks, DrawImageBlock );
 }
 
 
@@ -324,19 +200,8 @@ int main(int argc, const char * argv[])
 			NSLog(@"Waiting for download...");
 			std::this_thread::sleep_for( std::chrono::milliseconds(1000) );
 		}
-		std::cout << "Downloaded " << GifData.size() << " bytes" << std::endl;
-
-		uint8_t Square4x4[] = {
-			1,1,1,1,
-			1,0,0,1,
-			1,0,0,1,
-			1,1,1,1
-		};
-		//TImageBufferTest Test( 4, 4, Square4x4 );
-		//RenderCli( Test, 80, 20 );
 		
-		TImageBufferGif Gif( GifData );
-		RenderCli( Gif, 180, 150*0.30f );
+		OutputGif( GifData );
 	}
 	return 0;
 }
