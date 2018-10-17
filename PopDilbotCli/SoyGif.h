@@ -19,6 +19,7 @@ namespace Gif
 	class THeader;
 }
 
+
 class TImageBlock
 {
 public:
@@ -27,7 +28,7 @@ public:
 	uint16_t	mWidth;
 	uint16_t	mHeight;
 	uint8_t*	mPixels;
-	std::function<TRgba8(uint8_t)>	mGetColour;
+	std::function<TRgba8(uint8_t)>	GetColour;
 };
 
 //	for use on arduino, so no exceptions, error func instead

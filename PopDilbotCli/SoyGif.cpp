@@ -1,5 +1,5 @@
 #include "SoyGif.h"
-
+#include <iostream>
 
 Gif::THeader::THeader(std::function<bool(uint8_t*,int)> ReadBytes,std::function<void(const char*)> OnError)
 {
@@ -67,6 +67,15 @@ void Gif::THeader::ParseNextBlock(std::function<bool(uint8_t*,int)> ReadBytes,st
 			ParseExtensionBlock( ReadBytes, OnError, OnGraphicControlBlock, OnCommentBlock );
 			break;
 			
+		case 0x3b:
+			//	end block, read up all the rest of the bytes
+			while ( true )
+			{
+				if ( !ReadBytes(nullptr,1) )
+					break;
+			}
+			return;
+		
 		default:
 			OnError("Unknown block type");
 			return;
@@ -96,21 +105,22 @@ public:
 	}
 	
 	// LZW variables
-	int bbits;
-	int bbuf;
-	int cursize;                // The current code size
-	int curmask;
-	int codesize;
-	int clear_code;
-	int end_code;
-	int newcodes;               // First available code
-	int top_slot;               // Highest code for current size
-	int extra_slot;
-	int slot;                   // Last read code
-	int fc, oc;
-	int bs;                     // Current buffer size for GIF
-	int bcnt;
-	uint8_t *sp;
+	int bbits = -999;
+	int bbuf = -999;
+	int cursize = -999;                // The current code size
+	int curmask = -999;
+	int codesize = -999;
+	int clear_code = -999;
+	int end_code = -999;
+	int newcodes = -999;               // First available code
+	int top_slot = -999;               // Highest code for current size
+	//int extra_slot = -999;
+	int slot = -999;                   // Last read code
+	int fc = -999;
+	int oc = -999;
+	int bs = -999;                     // Current buffer size for GIF
+	int bcnt = -999;
+	uint8_t *sp = nullptr;
 	 uint8_t temp_buffer[260];
 	//uint8_t * temp_buffer;
 	
@@ -274,11 +284,10 @@ void Gif::THeader::ParseImageBlock(std::function<bool(uint8_t*,int)> ReadBytes,s
 		return;
 	}
 	
-	TImageBlock Block;
-	Block.mLeft = HeaderBytes[0] | (HeaderBytes[1]<<8);
-	Block.mTop = HeaderBytes[2] | (HeaderBytes[3]<<8);
-	Block.mWidth = HeaderBytes[4] | (HeaderBytes[5]<<8);
-	Block.mHeight = HeaderBytes[6] | (HeaderBytes[7]<<8);
+	auto BlockLeft = HeaderBytes[0] | (HeaderBytes[1]<<8);
+	auto BlockTop = HeaderBytes[2] | (HeaderBytes[3]<<8);
+	auto BlockWidth = HeaderBytes[4] | (HeaderBytes[5]<<8);
+	auto BlockHeight = HeaderBytes[6] | (HeaderBytes[7]<<8);
 	
 	auto Flags = HeaderBytes[8];
 	auto HasLocalPalette = (Flags >> 7) & BITCOUNT(1);
@@ -301,6 +310,9 @@ void Gif::THeader::ParseImageBlock(std::function<bool(uint8_t*,int)> ReadBytes,s
 		return;
 	}
 	
+	if ( !HasLocalPalette )
+		PaletteSize = 0;
+	
 	TRgb8 LocalPalette[256];
 	auto* LocalPalette8 = &LocalPalette[0].r;
 	if ( !ReadBytes( LocalPalette8, sizeof(TRgb8) * PaletteSize ) )
@@ -312,8 +324,11 @@ void Gif::THeader::ParseImageBlock(std::function<bool(uint8_t*,int)> ReadBytes,s
 	uint8_t LzwMinimumCodeSize;
 	ReadBytes( &LzwMinimumCodeSize, 1 );
 	
+	/*
 	//	https://github.com/pixelmatix/AnimatedGIFs/blob/master/GifDecoder_Impl.h#L557
 	//	read lzw blocks
+	//	LZW doesn't parse through all the data, manually set position
+	 //	so if we're parsing all the frames, then we need to work out how much space the blocks take up
 	while ( true )
 	{
 		uint8_t LzwBlockSize;
@@ -328,18 +343,41 @@ void Gif::THeader::ParseImageBlock(std::function<bool(uint8_t*,int)> ReadBytes,s
 			return;
 		}
 	}
-	
-	uint8_t Image[Block.mWidth*Block.mHeight];
+	*/
 	
 	LzwDecoder Decoder(ReadBytes);
 	Decoder.Init(LzwMinimumCodeSize);
+	
+	auto* Palette = HasLocalPalette ? LocalPalette : this->mPalette;
+	auto GetColour = [&](uint8_t ColourIndex)
+	{
+		bool Transparent = this->mTransparentPaletteIndex == ColourIndex;
+		TRgba8 Rgba;
+		Rgba.r = Palette[ColourIndex].r;
+		Rgba.g = Palette[ColourIndex].g;
+		Rgba.b = Palette[ColourIndex].b;
+		Rgba.a = Transparent ? 0 : 255;
+		return Rgba;
+	};
+	
 	// Decode the non interlaced LZW data into the image data buffer
-	for (auto y=Block.mTop;	y<Block.mTop+Block.mHeight;	y++)
+	for (auto y=BlockTop;	y<BlockTop+BlockHeight;	y++)
 	{
 		//int lzw_decode(uint8_t *buf, int len, uint8_t *bufend);
-		auto x = Block.mLeft;
+		uint8_t RowData[BlockWidth];
+		
 		//lzw_decode( imageData + (y * maxGifWidth) + x, Block.mWidth, imageData + sizeof(imageData) );
-		Decoder.decode( Image, Block.mWidth, Image+sizeof(Image) );
+		auto DecodedCount = Decoder.decode( RowData, BlockWidth, RowData+sizeof(RowData) );
+		
+		//	output block
+		TImageBlock Row;
+		Row.mLeft = BlockLeft;
+		Row.mTop = BlockTop;
+		Row.mWidth = BlockWidth;
+		Row.mHeight = 1;
+		Row.mPixels = RowData;
+		Row.GetColour = GetColour;
+		OnImageBlock(Row);
 	}
 	
 }

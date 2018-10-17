@@ -107,8 +107,8 @@ public:
 TImageBufferGif::TImageBufferGif(const std::vector<uint8_t>& GifData)
 {
 	//	desired channels
-	mChannels = 3;
-	mPixels = stbi_load_from_memory( GifData.data(), GifData.size(), &mWidth, &mHeight, &mChannels, mChannels );
+	//mChannels = 3;
+	//mPixels = stbi_load_from_memory( GifData.data(), GifData.size(), &mWidth, &mHeight, &mChannels, mChannels );
 
 
 	size_t BytesRead = 0;
@@ -152,6 +152,22 @@ TImageBufferGif::TImageBufferGif(const std::vector<uint8_t>& GifData)
 	};
 	auto OnImageBlock = [](const TImageBlock& ImageBlock)
 	{
+		//	draw colours
+		auto DrawColor = [&](uint8_t ColourIndex)
+		{
+			auto Colour = ImageBlock.GetColour(ColourIndex);
+			auto Luma = std::max( Colour.r, std::max( Colour.g, Colour.b ) );
+			if ( Luma > 120 )
+				std::cout << " ";
+			else
+				std::cout << "#";
+		};
+		auto Width = std::min<int>( ImageBlock.mWidth, 160 );
+		for ( int x=0;	x<Width;	x++ )
+		{
+			DrawColor( ImageBlock.mPixels[x] );
+		}
+		std::cout << std::endl;
 	};
 	
 	while ( BytesRead < GifData.size() )
