@@ -6,15 +6,7 @@ void Gif::ParseGif(TCallbacks& Callbacks,std::function<void(const TImageBlock&)>
 	auto& OnDebug = Callbacks.OnDebug;
 	
 	Gif::THeader Header( Callbacks );
-	{
-		String Debug;
-		Debug += "read gif ";
-		Debug += std::to_string(Header.mWidth);
-		Debug += "x";
-		Debug += std::to_string(Header.mHeight);
-		OnDebug( Debug );
-	}
-	
+		
 	auto OnGraphicControlBlock = []
 	{
 	};
@@ -36,6 +28,7 @@ void Gif::ParseGif(TCallbacks& Callbacks,std::function<void(const TImageBlock&)>
 Gif::THeader::THeader(TCallbacks& Callbacks)
 {
 	auto& OnError = Callbacks.OnError;
+	auto& OnDebug = Callbacks.OnDebug;
 	auto& ReadBytes = Callbacks.ReadBytes;
 
 	uint8_t HeaderBytes[13];
@@ -49,7 +42,14 @@ Gif::THeader::THeader(TCallbacks& Callbacks)
 	const auto MagicLength = strlen(Magic);
 	if ( 0 != memcmp( HeaderBytes, Magic, MagicLength ) )
 	{
-		OnError("Gif magic incorrect");
+		String Error = "Gif magic incorrect: ";
+		Error += (char)HeaderBytes[0];
+		Error += (char)HeaderBytes[1];
+		Error += (char)HeaderBytes[2];
+		Error += (char)HeaderBytes[3];
+		Error += (char)HeaderBytes[4];
+		Error += (char)HeaderBytes[5];
+		OnError(Error);
 		return;
 	}
 	
@@ -65,17 +65,27 @@ Gif::THeader::THeader(TCallbacks& Callbacks)
 	
 	mTransparentPaletteIndex = HeaderBytes[11];
 	auto AspectRatio = HeaderBytes[12];
-	
+
 	//	read palette
 	if ( HasPalette && mPaletteSize == 0 )
 	{
 		OnError("Flagged as having a global palette size, and palette size is 0");
 		return;
 	}
-	else if ( !HasPalette && mPaletteSize != 0 )
+	else if ( !HasPalette )
 	{
-		OnError("Flagged as having no global palette, and palette size > 0");
-		return;
+		//	the shift means this will always be non-zero, so reset
+		mPaletteSize = 0;
+	}
+
+	{
+		String Debug = "Gif ";
+		Debug += IntToString( mWidth );
+		Debug += "x";
+		Debug += IntToString( mHeight );
+		Debug += ". Global palette size: ";
+		Debug += IntToString( mPaletteSize );
+		OnDebug( Debug );
 	}
 	
 	//	read palette
@@ -91,6 +101,7 @@ bool Gif::THeader::ParseNextBlock(TCallbacks& Callbacks,std::function<void()> On
 {
 	auto& ReadBytes = Callbacks.ReadBytes;
 	auto& OnError = Callbacks.OnError;
+	auto& OnDebug = Callbacks.OnDebug;
 	
 	uint8_t BlockId;
 	if ( !ReadBytes( &BlockId, 1 ) )
@@ -102,14 +113,17 @@ bool Gif::THeader::ParseNextBlock(TCallbacks& Callbacks,std::function<void()> On
 	switch ( BlockId )
 	{
 		case 0x2c:
+			OnDebug("ParseImageBlock"); 
 			ParseImageBlock( Callbacks, OnImageBlock );
 			break;
 			
 		case 0x21:
+			OnDebug("ParseExtensionBlock"); 
 			ParseExtensionBlock( Callbacks, OnGraphicControlBlock, OnCommentBlock );
 			break;
 			
 		case 0x3b:
+			OnDebug("End Block"); 
 			//	end block, bail out
 			return false;
 		
@@ -455,6 +469,3 @@ void Gif::THeader::ParseExtensionBlock(TCallbacks& Callbacks,std::function<void(
 		}
 	}
 }
-
-
-

@@ -67,8 +67,8 @@ GxEPD_Class display(io /*RST=D4*/ /*BUSY=D2*/); // default selection of D4(=2), 
 #error define a board!
 #endif
 
-String ExtractAndRenderGif(WiFiClient& Client);
-
+String ExtractAndRenderGif(WiFiClient& Client,std::function<void(const String&)> OnError,std::function<void(const String&)> OnDebug);
+#include "SoyGif.h"
 
 
 std::function<void()> OnDrawStuffFunc = nullptr;
@@ -84,6 +84,22 @@ void DrawStuff(std::function<void()> OnDraw)
 {
 	OnDrawStuffFunc = OnDraw;
 	display.drawPaged( OnDrawStuffCallback );
+}
+
+
+void DrawText(const String& Text)
+{
+	auto PrintFunc = [&]()
+	{
+		const GFXfont* f = &FreeMonoBold9pt7b;
+		display.fillScreen(GxEPD_BLACK);
+		display.setTextColor(GxEPD_WHITE);
+		display.setFont(f);
+		display.setCursor(0, 0);
+		display.println();
+		display.println(Text);
+	};
+	DrawStuff( PrintFunc );
 }
 
 void DebugPrint(const String& Text)
@@ -126,6 +142,12 @@ void FontTest()
   display.println("pqrstuvwxyz{|}~ ");
 }
 
+//	https://github.com/ZinggJM/GxEPD/issues/54 :|
+#define ROTATION_0		0
+#define ROTATION_90		1
+#define ROTATION_180	2
+#define ROTATION_270	3
+
 void setup()
 {
 	delay(100);
@@ -134,6 +156,7 @@ void setup()
 
 	Serial.println("Initialising display");
 	display.init(115200); // enable diagnostic output on Serial
+	display.setRotation(ROTATION_90);
 
 	DebugPrint("Initialised display.");
 
@@ -176,24 +199,13 @@ void loop()
 	auto OnError = [&](const String& Error)
 	{
 		DebugPrint( Error );
-		auto PrintFunc = [&]()
-		{
-			const GFXfont* f = &FreeMonoBold9pt7b;
-			display.fillScreen(GxEPD_BLACK);
-			display.setTextColor(GxEPD_WHITE);
-			display.setFont(f);
-			display.setCursor(0, 0);
-			display.println();
-			display.println(Error);
-		};
-		DrawStuff( PrintFunc );		
+		DrawText(Error);	
 	};
-	auto OnConnected = [&](WiFiClient& Client)
+	auto OnConnected = [&](WiFiClient& Client,bool IsContentChunked)
 	{
-		DebugPrint("Connected!");
-		return String();
+		return ExtractAndRenderGif( Client, IsContentChunked, OnError, DebugPrint );
 	};
-	FetchHttp( Host, Path, "image/gif", ExtractAndRenderGif, OnError, DebugPrint );
+	FetchHttp( Host, Path, "image/gif", OnConnected, OnError, DebugPrint );
 	delay(100000);
 }
 /*
@@ -220,7 +232,7 @@ void showFontCallback()
 }
 */
 
-void FetchHttp(const char* Host,const char* Path,const char* ExpectedMimeType,std::function<String(WiFiClient&)> OnConnected,std::function<void(const String&)> OnError,std::function<void(const String&)> Debug)
+void FetchHttp(const char* Host,const char* Path,const char* ExpectedMimeType,std::function<String(WiFiClient&,bool)> OnConnected,std::function<void(const String&)> OnError,std::function<void(const String&)> Debug)
 {
 	WiFiClient Client;
 
@@ -256,7 +268,9 @@ void FetchHttp(const char* Host,const char* Path,const char* ExpectedMimeType,st
 	String ResponseValue;
 	const char* ContentTypeKey = "Content-Type: ";
 	const char* HeaderTailKey = "\r";
+	const char* ChunkedEncodingKey = "Transfer-Encoding: chunked";
 	String ContentTypeValue;
+	bool IsChunked = false;
 
 	while ( true )
 	{
@@ -268,11 +282,19 @@ void FetchHttp(const char* Host,const char* Path,const char* ExpectedMimeType,st
 
 		//	read next header
 		auto ResponseLine = Client.readStringUntil('\n');
+		auto DebugLine = ResponseLine;
+		DebugLine.replace("\r","\\r");
+		DebugLine.replace("\n","\\n");
+		Debug( DebugLine );
+
 		ResponseLine.replace('\r',' ');
 		ResponseLine.replace('\n',' ');
 		ResponseLine.trim();
 		if ( ResponseLine.length() == 0 )
 			break;
+
+		if ( ResponseLine.startsWith(ChunkedEncodingKey) )
+			IsChunked = true;
 
 		if ( ResponseLine.startsWith(ContentTypeKey) )
 		{
@@ -290,16 +312,241 @@ void FetchHttp(const char* Host,const char* Path,const char* ExpectedMimeType,st
 	}
 
 	//	process content
-	auto Error = OnConnected( Client );
+	auto Error = OnConnected( Client, IsChunked );
 	if ( Error.length() > 0 )
 	{
 		OnError( Error );
 	}
 }
 
-String ExtractAndRenderGif(WiFiClient& Client)
+void DrawImageBlock(const TImageBlock& ImageBlock,std::function<void(const String&)> OnDebug)
 {
-	return "Render a gif!";
+	{
+		String Debug;
+		Debug += "Got image block: [";
+		Debug += IntToString( ImageBlock.mLeft );
+		Debug += ",";
+		Debug += IntToString( ImageBlock.mTop );
+		Debug += ",";
+		Debug += IntToString( ImageBlock.mWidth );
+		Debug += ",";
+		Debug += IntToString( ImageBlock.mHeight );
+		Debug += "]";
+		OnDebug( Debug );
+	}
+
+	if ( ImageBlock.mTop % 4 != 0 )
+		return;
+
+	bool UsingRotation = true;
+	auto CurrentX = ImageBlock.mLeft;
+	auto CurrentY = ImageBlock.mTop;
+
+	//	draw colours
+	auto DrawColor = [&](TRgba8 Colour)
+	{
+		auto Luma = std::max( Colour.r, std::max( Colour.g, Colour.b ) );
+		if ( Luma > 200 )
+			display.drawPixel( CurrentX, CurrentY, GxEPD_WHITE );
+		else if ( Luma > 120 )
+			display.drawPixel( CurrentX, CurrentY, GxEPD_RED );
+		else
+			display.drawPixel( CurrentX, CurrentY, GxEPD_BLACK );
+		display.drawPixel( CurrentX, CurrentY, GxEPD_RED );
+		CurrentX++;
+	};
+	//	subsampler
+	auto DrawColor4 = [&](uint8_t a,uint8_t b,uint8_t c,uint8_t d)
+	{
+		auto Coloura = ImageBlock.GetColour(a);
+		auto Colourb = ImageBlock.GetColour(b);
+		auto Colourc = ImageBlock.GetColour(c);
+		auto Colourd = ImageBlock.GetColour(d);
+		//	get an average
+		TRgba8 rgba;
+		rgba.r = (Coloura.r + Colourb.r + Colourc.r + Colourd.r)/4.0f;
+		rgba.g = (Coloura.g + Colourb.g + Colourc.g + Colourd.g)/4.0f;
+		rgba.b = (Coloura.b + Colourb.b + Colourc.b + Colourd.b)/4.0f;
+		rgba.a = 1;
+		DrawColor( rgba );
+	};
+	auto DrawColor3 = [&](uint8_t a,uint8_t b,uint8_t c)
+	{
+		auto Coloura = ImageBlock.GetColour(a);
+		auto Colourb = ImageBlock.GetColour(b);
+		auto Colourc = ImageBlock.GetColour(c);
+		//	get an average
+		TRgba8 rgba;
+		rgba.r = (Coloura.r + Colourb.r + Colourc.r)/3.0f;
+		rgba.g = (Coloura.g + Colourb.g + Colourc.g)/3.0f;
+		rgba.b = (Coloura.b + Colourb.b + Colourc.b)/3.0f;
+		rgba.a = 1;
+		DrawColor( rgba );
+	};
+	auto DrawColor2 = [&](uint8_t a,uint8_t b)
+	{
+		auto Coloura = ImageBlock.GetColour(a);
+		auto Colourb = ImageBlock.GetColour(b);
+		//	get an average
+		TRgba8 rgba;
+		rgba.r = (Coloura.r + Colourb.r)/2.0f;
+		rgba.g = (Coloura.g + Colourb.g)/2.0f;
+		rgba.b = (Coloura.b + Colourb.b)/2.0f;
+		rgba.a = 1;
+		DrawColor( rgba );
+	};
+	auto SubSample = 4;
+	auto Width = std::min<int>( ImageBlock.mWidth, display.width()*SubSample );
+	for ( int x=0;	x<Width;	x+=SubSample )
+	{
+		auto x0 = ImageBlock.mPixels[x+0];
+		auto x1 = ImageBlock.mPixels[x+1];
+		auto x2 = ImageBlock.mPixels[x+2];
+		auto x3 = ImageBlock.mPixels[x+3];
+			
+		if ( SubSample == 1 )
+			DrawColor( ImageBlock.GetColour(x0) );
+		else if ( SubSample == 2 )
+			DrawColor2( x0, x1 );
+		else if ( SubSample == 3 )
+			DrawColor3( x0, x1, x2 );
+		else if ( SubSample == 4 )
+			DrawColor4( x0, x1, x2, x3 );
+	}
+	display.updateWindow( ImageBlock.mLeft, ImageBlock.mTop, ImageBlock.mWidth, ImageBlock.mHeight, UsingRotation );
+}
+
+String ExtractAndRenderGif(WiFiClient& Client,bool IsContentChunked,std::function<void(const String&)> OnError,std::function<void(const String&)> OnDebug)
+{
+	int ChunkLength = 0;
+	int BytesRead = 0;
+
+	auto EatChunkHeader = [&]()
+	{
+		if ( !IsContentChunked )
+			return true;
+
+		//	more of last chunk still to go
+		if ( ChunkLength > 0 )
+			return true;
+
+		//	read next chunk size
+		//	<lengthinhex>\r\n
+		ChunkLength = 0;
+
+		while ( true )
+		{
+			auto NextByte = Client.read();
+			if ( NextByte == -1 )
+			{
+				OnDebug("GetChunkLength nextbyte -1");
+				return false;
+			}
+			
+			//	eat trailing \r\n
+			if ( NextByte == '\r' )
+			{
+				NextByte = Client.read();
+				if ( NextByte != '\n' )
+				{
+					OnDebug("GetChunkLength tail not \n");
+					return false;
+				}
+				break;
+			}
+
+			//	not hex!
+			if ( NextByte >= 'A' && NextByte <= 'F' )
+				NextByte = (NextByte - 'A') + 0xA;
+			else if ( NextByte >= 'a' && NextByte <= 'f' )
+				NextByte = (NextByte - 'a') + 0xA;
+			else if ( NextByte >= '0' && NextByte <= '9' )
+				NextByte -= '0';
+			else
+			{
+				OnDebug("GetChunkLength not hex");
+				return false;
+			}
+
+			//	shift up last hex
+			ChunkLength <<= 4;
+			ChunkLength |= NextByte;
+		}
+		
+		String Debug;
+		Debug += "Read next chunk length: ";
+		Debug += IntToString( ChunkLength );
+		OnDebug(Debug);
+			
+		return true;
+	};
+	
+	auto ReadBytes = [&](uint8_t* Buffer,int BufferSize)
+	{
+		//	unpop
+		if ( BufferSize < 0 )
+		{
+			BytesRead += BufferSize;
+			ChunkLength += BufferSize;
+			return true;
+		}
+		//if ( BytesRead + BufferSize > GifData.size() )
+		//	return false;
+		
+		for ( int i=0;	i<BufferSize;	i++ )
+		{
+			//	read next byte
+			if ( !EatChunkHeader() )
+				return false;
+
+			uint8_t NextByte;
+			auto ReadCount = Client.readBytes( &NextByte, 1 );
+			if ( ReadCount == 0 )
+			{
+				OnDebug("Didn't read next byte");
+				if ( !Client.connected() )
+					OnDebug("Client not connected");
+				if ( !Client.available() )
+					OnDebug("Data not availible");
+				return false;
+			}
+
+			ChunkLength--;
+			
+			//	walking over data if null
+			if ( Buffer != nullptr )
+				Buffer[i] = NextByte;	
+		}
+		BytesRead += BufferSize;
+		return true;
+	};
+
+	bool AnyError = false;
+	auto ErrorWrapper = [&](const String& Error)
+	{
+		OnError(Error);
+		AnyError = true;
+	};	
+	
+	TCallbacks Callbacks;
+	Callbacks.ReadBytes = ReadBytes;
+	Callbacks.OnError = ErrorWrapper;
+	Callbacks.OnDebug = OnDebug;
+
+	auto DrawBlock = [&](const TImageBlock& ImageBlock)
+	{
+		OnDebug("Draw block");
+		DrawImageBlock( ImageBlock, OnDebug );
+	};
+	
+	Gif::ParseGif( Callbacks, DrawBlock );
+
+	if ( !AnyError )
+	{
+		OnDebug("Display update");
+		display.update();
+	}
+	return String();
 }
 
 	/*

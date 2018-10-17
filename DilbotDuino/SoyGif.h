@@ -2,10 +2,19 @@
 
 #include <functional>
 
-//	arduino's string is String :)
-#include <string>
-typedef std::string String;
+#if defined(ARDUINO)
+#define TARGET_ARDUINO
+#endif
 
+#if defined(TARGET_ARDUINO)
+	#include <Arduino.h>	//	for String
+	inline String IntToString(int Value)	{	return String(Value);	}
+#else
+	//	arduino's string is String :)
+	#include <string>
+	typedef std::string String;
+	inline String IntToString(int Value)	{	return std::to_string(Value);	}
+#endif
 
 class TRgb8
 {
@@ -69,4 +78,3 @@ public:
 	size_t		mHeight;
 	uint8_t		mTransparentPaletteIndex;
 };
-
