@@ -1,14 +1,14 @@
 #include "SoyGif.h"
-
+extern void WDT_YEILD();
 
 void Gif::ParseGif(TCallbacks& Callbacks,std::function<void(const TImageBlock&)> DrawPixels)
 {
 	Gif::THeader Header( Callbacks );
 		
-	auto OnGraphicControlBlock = []
+	std::function<void()> OnGraphicControlBlock = []
 	{
 	};
-	auto OnCommentBlock = []
+	std::function<void()> OnCommentBlock = []
 	{
 	};
 	
@@ -95,7 +95,7 @@ Gif::THeader::THeader(TCallbacks& Callbacks)
 	}
 }
 
-bool Gif::THeader::ParseNextBlock(TCallbacks& Callbacks,std::function<void()> OnGraphicControlBlock,std::function<void()> OnCommentBlock,std::function<void(const TImageBlock&)> OnImageBlock)
+bool Gif::THeader::ParseNextBlock(TCallbacks& Callbacks,std::function<void()>& OnGraphicControlBlock,std::function<void()>& OnCommentBlock,std::function<void(const TImageBlock&)>& OnImageBlock)
 {
 	auto& ReadBytes = Callbacks.ReadBytes;
 	auto& OnError = Callbacks.OnError;
@@ -156,11 +156,24 @@ bool Gif::THeader::ParseNextBlock(TCallbacks& Callbacks,std::function<void()> On
 	return true;
 }
 
-class LzwDecoder
+
+namespace Lzw
+{
+	 uint8_t temp_buffer[256];
+#define lzwMaxBits	12
+#define LZW_SIZTABLE  (1 << lzwMaxBits)
+uint8_t stack  [LZW_SIZTABLE];
+uint8_t suffix [LZW_SIZTABLE];
+uint16_t prefix [LZW_SIZTABLE];
+	class Decoder;
+}
+
+class Lzw::Decoder
 {
 public:
-	LzwDecoder(std::function<bool(uint8_t*,int)> ReadBlock) :
-		readIntoBuffer	( ReadBlock )
+	Decoder(std::function<bool(uint8_t*,size_t)>& ReadBlock,std::function<void(const String&)>& Debug) :
+		readIntoBuffer	( ReadBlock ),
+		Debug			( Debug )
 	{
 		
 	}
@@ -182,7 +195,6 @@ public:
 	int bs = -999;                     // Current buffer size for GIF
 	int bcnt = -999;
 	uint8_t *sp = nullptr;
-	 uint8_t temp_buffer[260];
 	//uint8_t * temp_buffer;
 	
 	// Masks for 0 .. 16 bits
@@ -193,20 +205,17 @@ public:
 		0x0FFF, 0x1FFF, 0x3FFF, 0x7FFF,
 		0xFFFF
 	};
-#define lzwMaxBits	12
-	#define LZW_SIZTABLE  (1 << lzwMaxBits)
-	uint8_t stack  [LZW_SIZTABLE];
-	uint8_t suffix [LZW_SIZTABLE];
-	uint16_t prefix [LZW_SIZTABLE];
+
 	
 	void 	Init(int csize);
 	int		get_code();
 	int 	decode(uint8_t *buf, int len, uint8_t *bufend);
 	
-	std::function<bool(uint8_t*,int)>	readIntoBuffer;
+	std::function<bool(uint8_t*,size_t)>&	readIntoBuffer;
+	std::function<void(const String&)>& Debug;
 };
 
-void LzwDecoder::Init(int csize)
+void Lzw::Decoder::Init(int csize)
 {
 	// Initialize read buffer variables
 	bbuf = 0;
@@ -227,13 +236,17 @@ void LzwDecoder::Init(int csize)
 }
 
 //  Get one code of given number of bits from stream
-int LzwDecoder::get_code()
+int Lzw::Decoder::get_code()
 {
-	while (bbits < cursize) {
-		if (bcnt == bs) {
+	static_assert( sizeof(temp_buffer) >= 256, "Temp buffer needs to be 1-byte-max length");
+	while (bbits < cursize)
+	{
+		if (bcnt == bs)
+		{
 			// get number of bytes in next block
-			readIntoBuffer(temp_buffer, 1);
-			bs = temp_buffer[0];
+			uint8_t BlockSize;
+			readIntoBuffer(&BlockSize, 1);
+			bs = BlockSize;
 			readIntoBuffer(temp_buffer, bs);
 			bcnt = 0;
 		}
@@ -252,42 +265,49 @@ int LzwDecoder::get_code()
 //   buf 8 bit output buffer
 //   len number of pixels to decode
 //   returns the number of bytes decoded
-int LzwDecoder::decode(uint8_t *buf, int len, uint8_t *bufend)
+int Lzw::Decoder::decode(uint8_t *buf, int len, uint8_t *bufend)
 {
+	//	https://arduino-esp8266.readthedocs.io/en/latest/faq/a02-my-esp-crashes.html#what-is-the-cause-of-restart
 	int l, c, code;
 	
-#if LZWDEBUG == 1
-	unsigned char debugMessagePrinted = 0;
-#endif
-	
-	if (end_code < 0) {
+	if (end_code < 0)
+	{
 		return 0;
 	}
 	l = len;
-	
-	for (;;) {
-		while (sp > stack) {
+
+	int LoopCount = 0;
+	for (;;) 
+	{
+		//Debug( String("lzw LoopCount=") + IntToString(LoopCount) );
+		LoopCount++;
+		WDT_YEILD();
+		while (sp > stack) 
+		{
 			// load buf with data if we're still within bounds
 			if(buf < bufend) {
 				*buf++ = *(--sp);
 			} else {
 				// out of bounds, keep incrementing the pointers, but don't use the data
-#if LZWDEBUG == 1
+
 				// only print this message once per call to lzw_decode
 				if(buf == bufend)
-					Serial.println("****** LZW imageData buffer overrun *******");
-#endif
+					Debug("LZW imageData buffer overrun");
+				return 0;
 			}
-			if ((--l) == 0) {
+			if ((--l) == 0) 
+			{
 				return len;
 			}
 		}
 		c = get_code();
-		if (c == end_code) {
-			break;
-			
+		//Debug("Get_code()");
+		if (c == end_code) 
+		{
+			break;			
 		}
-		else if (c == clear_code) {
+		else if (c == clear_code) 
+		{
 			cursize = codesize + 1;
 			curmask = mask[cursize];
 			slot = newcodes;
@@ -295,7 +315,8 @@ int LzwDecoder::decode(uint8_t *buf, int len, uint8_t *bufend)
 			fc= oc= -1;
 			
 		}
-		else    {
+		else   
+		{
 			
 			code = c;
 			if ((code == slot) && (fc >= 0)) {
@@ -305,7 +326,10 @@ int LzwDecoder::decode(uint8_t *buf, int len, uint8_t *bufend)
 			else if (code >= slot) {
 				break;
 			}
-			while (code >= newcodes) {
+			while (code >= newcodes)
+			{
+				//Debug( String("while (code[") + IntToString(code) +"/" + IntToString(LZW_SIZTABLE) + " >= newcodes) {");
+				WDT_YEILD();
 				*sp++ = suffix[code];
 				code = prefix[code];
 			}
@@ -316,19 +340,18 @@ int LzwDecoder::decode(uint8_t *buf, int len, uint8_t *bufend)
 			}
 			fc = code;
 			oc = c;
-			if (slot >= top_slot) {
-				if (cursize < lzwMaxBits) {
+			if (slot >= top_slot)
+			{
+				if (cursize < lzwMaxBits)
+				{
 					top_slot <<= 1;
 					curmask = mask[++cursize];
-				} else {
-#if LZWDEBUG == 1
-					if(!debugMessagePrinted) {
-						debugMessagePrinted = 1;
-						Serial.println("****** cursize >= lzwMaxBits *******");
-					}
-#endif
 				}
-				
+				else
+				{
+					Debug("lzw cursize >= lzwMaxBits");
+					return 0;
+				}
 			}
 		}
 	}
@@ -336,11 +359,16 @@ int LzwDecoder::decode(uint8_t *buf, int len, uint8_t *bufend)
 	return len - l;
 }
 
-void Gif::THeader::ParseImageBlock(TCallbacks& Callbacks,std::function<void(const TImageBlock&)> OnImageBlock)
+uint8_t RowData[1000];
+TRgb8 LocalPalette[256];
+	
+void Gif::THeader::ParseImageBlock(TCallbacks& Callbacks,std::function<void(const TImageBlock&)>& OnImageBlock)
 {
 	auto& ReadBytes = Callbacks.ReadBytes;
 	auto& OnError = Callbacks.OnError;
+	auto& OnDebug = Callbacks.OnDebug;
 
+	OnDebug("Reading image block header...");
 	uint8_t HeaderBytes[9];
 	if ( !ReadBytes( HeaderBytes, sizeof(HeaderBytes) ) )
 	{
@@ -376,8 +404,9 @@ void Gif::THeader::ParseImageBlock(TCallbacks& Callbacks,std::function<void(cons
 	
 	if ( !HasLocalPalette )
 		PaletteSize = 0;
+
+	OnDebug( String("Reading local palette x") + IntToString(PaletteSize) );
 	
-	TRgb8 LocalPalette[256];
 	auto* LocalPalette8 = &LocalPalette[0].r;
 	if ( !ReadBytes( LocalPalette8, sizeof(TRgb8) * PaletteSize ) )
 	{
@@ -408,8 +437,9 @@ void Gif::THeader::ParseImageBlock(TCallbacks& Callbacks,std::function<void(cons
 		}
 	}
 	*/
-	
-	LzwDecoder Decoder(ReadBytes);
+
+	OnDebug("Initialising lzw decoder");
+	Lzw::Decoder Decoder(ReadBytes, OnDebug );
 	Decoder.Init(LzwMinimumCodeSize);
 	
 	auto* Palette = HasLocalPalette ? LocalPalette : this->mPalette;
@@ -425,16 +455,14 @@ void Gif::THeader::ParseImageBlock(TCallbacks& Callbacks,std::function<void(cons
 	};
 
 	//uint8_t RowData[BlockWidth];
-	uint8_t RowData[1000];
 
 		
 	// Decode the non interlaced LZW data into the image data buffer
 	for (auto y=BlockTop;	y<BlockTop+BlockHeight;	y++)
 	{
+		WDT_YEILD();
 		//int lzw_decode(uint8_t *buf, int len, uint8_t *bufend);
 
-		if ( y > 3 )
-			break;
 		//lzw_decode( imageData + (y * maxGifWidth) + x, Block.mWidth, imageData + sizeof(imageData) );
 		auto DecodedCount = Decoder.decode( RowData, BlockWidth, RowData+sizeof(RowData) );
 		
@@ -452,7 +480,7 @@ void Gif::THeader::ParseImageBlock(TCallbacks& Callbacks,std::function<void(cons
 }
 
 
-void Gif::THeader::ParseExtensionBlock(TCallbacks& Callbacks,std::function<void()> OnGraphicControlBlock,std::function<void()> OnCommentBlock,bool& ReadTerminator)
+void Gif::THeader::ParseExtensionBlock(TCallbacks& Callbacks,std::function<void()>& OnGraphicControlBlock,std::function<void()>& OnCommentBlock,bool& ReadTerminator)
 {
 	auto& OnError = Callbacks.OnError;
 	auto& ReadBytes = Callbacks.ReadBytes;

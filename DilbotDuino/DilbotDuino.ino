@@ -1,5 +1,6 @@
 //	using https://github.com/ZinggJM/GxEPD/
 //	commit b59ae551a18b8e2dbeeed1bb62f8197e15554be9
+#include "SoyGif.h"
 #include <GxEPD.h>
 
 // select the display class to use, only one
@@ -25,8 +26,10 @@
 // C:\Users\xxx\AppData\Local\Arduino15\packages\arduino\hardware\avr\1.6.21\variants\standard\pins_arduino.h
 
 //#define BOARD_NANO
-#define BOARD_NODEMCU
+//#define BOARD_NODEMCU
+#define BOARD_MKR1010
 #include <Fonts/FreeMonoBold9pt7b.h>
+
 
 #if defined(BOARD_NANO)
 GxIO_Class io(SPI, /*CS=*/ SS, /*DC=*/ 9, /*RST=*/ 8); // arbitrary selection of 8, 9 selected for default of GxEPD_Class
@@ -63,16 +66,33 @@ GxEPD_Class display(io /*RST=D4*/ /*BUSY=D2*/); // default selection of D4(=2), 
 [ 7] MOSI/blue/din
 [ 8] SS/orange/CS
  */
+#elif defined(BOARD_MKR1010)
+//#include <WiFi101.h>
+//#include <WiFiClient.h>
+#include <WiFiNINA.h>
+GxIO_Class io(SPI, 7, 2, 1); // arbitrary selection of D3(=0), D4(=2), selected for default of GxEPD_Class
+GxEPD_Class display(io,1,10); // default selection of D4(=2), D2(=4)
+
+
 #else
 #error define a board!
 #endif
 
 String ExtractAndRenderGif(WiFiClient& Client,std::function<void(const String&)> OnError,std::function<void(const String&)> OnDebug);
-#include "SoyGif.h"
+
 
 
 std::function<void()> OnDrawStuffFunc = nullptr;
 
+
+
+void WDT_YEILD()
+{
+	#if defined(BOARD_NODEMCU)
+	ESP.wdtFeed();
+	#endif
+	//yield();
+}
 
 void OnDrawStuffCallback()
 {
@@ -160,6 +180,11 @@ void setup()
 
 	DebugPrint("Initialised display.");
 
+	//	disable software watchdog
+	#if defined(BOARD_NODEMCU)
+	ESP.wdtDisable();
+	ESP.wdtEnable(WDTO_8S);
+	#endif
 }
 
 
@@ -167,6 +192,7 @@ void ConnectToWifi(const String& Ssid,const String& Password,std::function<void(
 {
 	Debug( String("Setting up wifi to ") + Ssid + "/" + Password);
 
+#if defined(BOARD_NODEMCU)
 	WiFi.persistent(true);
 	WiFi.mode(WIFI_STA); // switch off AP
 	WiFi.setAutoConnect(true);
@@ -183,6 +209,22 @@ void ConnectToWifi(const String& Ssid,const String& Password,std::function<void(
 		Attempt++;
 	}
 	while ( WiFi.status() != WL_CONNECTED );
+
+#elif defined(BOARD_MKR1010)
+
+	int Attempt=0;
+	auto Status = WiFi.status();
+	do
+	{
+		Status = WiFi.begin(Ssid.c_str(), Password.c_str());
+
+		delay(1000);
+		if ( (Attempt % 10) == 0 )
+			Debug( String("Attempt #") + Attempt + "\nStatus:" + WiFi.status());
+		Attempt++;
+	}
+	while ( Status != WL_CONNECTED );
+#endif
 }
 
 
@@ -191,10 +233,12 @@ void loop()
 	if ( WiFi.status() != WL_CONNECTED )
 	{
 		ConnectToWifi( "ZaegerMeister", "InTheYear2525", DebugPrint );
+		//DrawText("Connected to wifi!");
 	}
 	
 	auto* Host = "assets.amuniversal.com";
 	auto* Path = "/a2bb8780a4c401365a02005056a9545d";
+	//auto* Path = "/985bb260a4c401365a02005056a9545d";
 
 	auto OnError = [&](const String& Error)
 	{
@@ -248,7 +292,7 @@ void FetchHttp(const char* Host,const char* Path,const char* ExpectedMimeType,st
 	//	send get request
 	Client.print(String("GET ") + Path + " HTTP/1.1\r\n" +
                "Host: " + Host + "\r\n" +
-               "User-Agent: Dilbot\r\n" +
+               "User-Agent: grahamatgrahamreevesdotcom\r\n" +
                "Connection: close\r\n\r\n");
 
 	auto* OkayResponsePrefix = "HTTP/1.1 200";
@@ -317,6 +361,40 @@ void FetchHttp(const char* Host,const char* Path,const char* ExpectedMimeType,st
 	}
 }
 
+void DrawImageBlockDebug(const TImageBlock& ImageBlock,std::function<void(const String&)> OnDebug)
+{
+	{
+		String Debug;
+		Debug += "Got image block: [";
+		Debug += IntToString( ImageBlock.mLeft );
+		Debug += ",";
+		Debug += IntToString( ImageBlock.mTop );
+		Debug += ",";
+		Debug += IntToString( ImageBlock.mWidth );
+		Debug += ",";
+		Debug += IntToString( ImageBlock.mHeight );
+		Debug += "]";
+		OnDebug( Debug );
+	}
+	auto w = ImageBlock.mWidth;
+	auto h = ImageBlock.mHeight;
+	auto l = ImageBlock.mLeft;
+	auto r = (l+w)-1;
+	auto t = ImageBlock.mTop;
+	auto b = (t+h)-1;
+	t = std::min<int>( t, display.height()-1 );
+	b = std::min<int>( b, display.height()-1 );
+	l = std::min<int>( l, display.width()-1 );
+	r = std::min<int>( r, display.width()-1 );
+	for ( int y=t;	y<=b;	y++ )
+	{
+		for ( int x=l;	x<=r;	x++ )
+		{
+			display.drawPixel( x, y, GxEPD_BLACK );
+		}
+	}
+}
+
 void DrawImageBlock(const TImageBlock& ImageBlock,std::function<void(const String&)> OnDebug)
 {
 	{
@@ -333,7 +411,8 @@ void DrawImageBlock(const TImageBlock& ImageBlock,std::function<void(const Strin
 		OnDebug( Debug );
 	}
 
-	//if ( ImageBlock.mTop % 4 != 0 )
+	auto SubSample = 2;
+	//if ( ImageBlock.mTop % SubSample != 0 )
 	//	return;
 
 	bool UsingRotation = true;
@@ -343,6 +422,8 @@ void DrawImageBlock(const TImageBlock& ImageBlock,std::function<void(const Strin
 	//	draw colours
 	auto DrawColor = [&](TRgba8 Colour)
 	{
+		/*
+		//yield();
 		auto Luma = std::max( Colour.r, std::max( Colour.g, Colour.b ) );
 		if ( Luma > 200 )
 			display.drawPixel( CurrentX, CurrentY, GxEPD_WHITE );
@@ -350,7 +431,7 @@ void DrawImageBlock(const TImageBlock& ImageBlock,std::function<void(const Strin
 			display.drawPixel( CurrentX, CurrentY, GxEPD_RED );
 		else
 			display.drawPixel( CurrentX, CurrentY, GxEPD_BLACK );
-		
+		*/
 		//OnDebug( String("DrawPixel(") + IntToString(CurrentX) + "," + IntToString(CurrentY) );
 		CurrentX++;
 	};
@@ -394,16 +475,20 @@ void DrawImageBlock(const TImageBlock& ImageBlock,std::function<void(const Strin
 		rgba.a = 1;
 		DrawColor( rgba );
 	};
-	auto SubSample = 2;
-	auto Width = std::min<int>( ImageBlock.mWidth/SubSample, display.width() );
-	for ( int x=0;	x<Width-SubSample;	x+=SubSample )
+	#define QUICK_MIN(a,b)		( ((a) < (b)) ? (a) : (b) )
+	//auto Width = std::min<int>( ImageBlock.mWidth/SubSample, display.width() );
+	auto Width = QUICK_MIN( ImageBlock.mWidth/SubSample, display.width() );
+	OnDebug( String("Drawing row width: ") + IntToString(Width) );
+	for ( int x=0;	x<Width;	x+=SubSample )
 	{
 		//	try and avoid WDT timeout (wifi chip)
-		delay(1);
-		auto x0 = ImageBlock.mPixels[x+0];
-		auto x1 = ImageBlock.mPixels[x+1];
-		auto x2 = ImageBlock.mPixels[x+2];
-		auto x3 = ImageBlock.mPixels[x+3];
+		WDT_YEILD();
+		auto xmax = ImageBlock.mWidth-1;
+		/*
+		auto x0 = ImageBlock.mPixels[std::min(x+0,xmax)];
+		auto x1 = ImageBlock.mPixels[std::min(x+1,xmax)];
+		auto x2 = ImageBlock.mPixels[std::min(x+2,xmax)];
+		auto x3 = ImageBlock.mPixels[std::min(x+3,xmax)];
 			
 		if ( SubSample == 1 )
 			DrawColor( ImageBlock.GetColour(x0) );
@@ -413,6 +498,7 @@ void DrawImageBlock(const TImageBlock& ImageBlock,std::function<void(const Strin
 			DrawColor3( x0, x1, x2 );
 		else if ( SubSample == 4 )
 			DrawColor4( x0, x1, x2, x3 );
+			*/
 	}
 	//display.updateWindow( ImageBlock.mLeft, ImageBlock.mTop, ImageBlock.mWidth, ImageBlock.mHeight, UsingRotation );
 }
@@ -550,9 +636,10 @@ String ExtractAndRenderGif(WiFiClient& Client,bool IsContentChunked,std::functio
 	Callbacks.OnError = ErrorWrapper;
 	Callbacks.OnDebug = OnDebug;
 
+	display.fillScreen(GxEPD_WHITE);
 	auto DrawBlock = [&](const TImageBlock& ImageBlock)
 	{
-		DrawImageBlock( ImageBlock, OnDebug );
+		DrawImageBlockDebug( ImageBlock, OnDebug );
 	};
 	
 	Gif::ParseGif( Callbacks, DrawBlock );
@@ -744,3 +831,16 @@ String ExtractAndRenderGif(WiFiClient& Client,bool IsContentChunked,std::functio
     Serial.println("bitmap format not handled.");
   }
   */
+
+
+  
+ #if defined(BOARD_MKR1010)
+namespace std
+{
+	void __throw_bad_function_call()
+	{
+		//throw bad_function_call("invalid function called");
+		DrawText("Bad function called");
+	}
+}
+#endif

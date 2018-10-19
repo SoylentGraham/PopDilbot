@@ -1,5 +1,8 @@
 #pragma once
 
+//	mkr board has some min/max defines 
+#undef min
+#undef max
 #include <functional>
 
 #if defined(ARDUINO)
@@ -65,11 +68,11 @@ public:
 	THeader(TCallbacks& Callbacks);
 	
 	//	returns true if more data to parse
-	bool		ParseNextBlock(TCallbacks& Callbacks,std::function<void()> OnGraphicControlBlock,std::function<void()> OnCommentBlock,std::function<void(const TImageBlock&)> OnImageBlock);
+	bool		ParseNextBlock(TCallbacks& Callbacks,std::function<void()>& OnGraphicControlBlock,std::function<void()>& OnCommentBlock,std::function<void(const TImageBlock&)>& OnImageBlock);
 
 private:
-	void		ParseImageBlock(TCallbacks& Callbacks,std::function<void(const TImageBlock&)> OnImageBlock);
-	void		ParseExtensionBlock(TCallbacks& Callbacks,std::function<void()> OnGraphicControlBlock,std::function<void()> OnCommentBlock,bool& ReadTerminator);
+	void		ParseImageBlock(TCallbacks& Callbacks,std::function<void(const TImageBlock&)>& OnImageBlock);
+	void		ParseExtensionBlock(TCallbacks& Callbacks,std::function<void()>& OnGraphicControlBlock,std::function<void()>& OnCommentBlock,bool& ReadTerminator);
 
 public:
 	TRgb8		mPalette[256];	//	global/default palette

@@ -13,7 +13,10 @@
 #include <sstream>
 #include "SoyGif.h"
 
-
+void WDT_YEILD()
+{
+	
+}
 
 void OutputGif(const std::vector<uint8_t>& GifData)
 {
