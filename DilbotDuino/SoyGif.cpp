@@ -418,6 +418,7 @@ TDecodeResult::Type Lzw::Decoder::decode(uint8_t *buf, int len, uint8_t *bufend,
 TDecodeResult::Type Gif::THeader::ParseImageBlockRow(TCallbacks& Callbacks,TPendingImageBlock& Block,bool& FinishedBlock,std::function<void(const TImageBlock&)>& OnImageBlock)
 {
 	auto& StreamBuffer = Callbacks.mStreamBuffer;
+	auto& OnError = Callbacks.OnError;
 	
 	//	read byte wrapper so we can unpop
 	size_t ReadCount = 0;
@@ -464,12 +465,26 @@ TDecodeResult::Type Gif::THeader::ParseImageBlockRow(TCallbacks& Callbacks,TPend
 	Row.mHeight = 1;
 	Row.mPixels = RowData;
 	Row.GetColour = GetColour;
-	OnImageBlock(Row);
+
+	//	in the rare event that we need one more byte after processing the image, we grab it before rendering
+	if ( Block.mCurrentRow >= Block.mHeight )
+	{
+		//	read terminator
+		uint8_t Terminator = 0xcc;
+		if ( !ReadBytes( &Terminator, 1 ) )
+			return Unpop();
+		if ( Terminator != 0 )
+		{
+			OnError("Image block terminator not zero");
+			return TDecodeResult::Error;
+		}
+		FinishedBlock = true;
+	}
 	
 	Block.mCurrentRow++;
-	if ( Block.mCurrentRow > Block.mHeight )
-		FinishedBlock = true;
+	OnImageBlock(Row);
 	
+
 	return TDecodeResult::Finished;
 }
 
