@@ -1,10 +1,75 @@
 #include "SoyGif.h"
 extern void WDT_YEILD();
 
-void Gif::ParseGif(TCallbacks& Callbacks,std::function<void(const TImageBlock&)> DrawPixels)
+
+
+
+bool TStreamBuffer::Push(uint8_t Data)
 {
-	Gif::THeader Header( Callbacks );
-		
+	auto CurrentBufferSize = GetBufferSize();
+	if ( CurrentBufferSize == BUFFERSIZE-1 )
+		return false;
+	mBuffer[mBufferTail] = Data;
+	mBufferTail++;
+	mBufferTail %= BUFFERSIZE;
+	return true;
+}
+
+bool TStreamBuffer::Pop(uint8_t* Data,size_t DataSize)
+{
+	auto CurrentBufferSize = GetBufferSize();
+	if ( CurrentBufferSize < DataSize )
+		return false;
+	
+	for ( int i=0;	i<DataSize;	i++ )
+	{
+		auto BufferIndex = (mBufferHead + i) % BUFFERSIZE;
+		if ( Data != nullptr )
+			Data[i] = mBuffer[BufferIndex];
+	}
+	mBufferHead += DataSize;
+	mBufferHead %= BUFFERSIZE;
+	return true;
+}
+
+void TStreamBuffer::Unpop(size_t DataSize)
+{
+	//	check in case this wraps us back
+	auto NewHead = static_cast<ssize_t>(mBufferHead) - static_cast<ssize_t>(DataSize);
+	if ( NewHead < 0 )
+		NewHead += BUFFERSIZE;
+	mBufferHead = NewHead;
+}
+
+size_t TStreamBuffer::GetBufferSize()
+{
+	auto Tail = mBufferTail;
+	if ( Tail < mBufferHead )
+		Tail += BUFFERSIZE;
+	return Tail - mBufferHead;
+}
+
+
+
+
+TDecodeResult::Type Gif::ParseGif(Gif::THeader& Header,TCallbacks& Callbacks,std::function<void(const TImageBlock&)> DrawPixels)
+{
+	if ( !Header.mGotHeader )
+	{
+		auto Result = Header.ParseHeader(Callbacks);
+		if ( Result != TDecodeResult::Finished )
+			return Result;
+		Header.mGotHeader = true;
+	}
+	
+	if ( !Header.mGotPalette )
+	{
+		auto Result = Header.ParseGlobalPalette(Callbacks);
+		if ( Result != TDecodeResult::Finished )
+			return Result;
+		Header.mGotPalette = true;
+	}
+	
 	std::function<void()> OnGraphicControlBlock = []
 	{
 	};
@@ -12,29 +77,34 @@ void Gif::ParseGif(TCallbacks& Callbacks,std::function<void(const TImageBlock&)>
 	{
 	};
 	
-	while ( true )
+	//	continue a pending image block
+	if ( Header.mHasPendingImageBlock )
 	{
-		auto MoreData = Header.ParseNextBlock( Callbacks, OnGraphicControlBlock, OnCommentBlock, DrawPixels );
-		if ( !MoreData )
-			return;
+		bool ImageBlockFinished = false;
+		auto Result = Header.ParseImageBlockRow( Callbacks, Header.mPendingImageBlock, ImageBlockFinished, DrawPixels );
+		if ( Result != TDecodeResult::Finished )
+			return Result;
+		if ( ImageBlockFinished )
+			Header.mHasPendingImageBlock = false;
+		
+		return TDecodeResult::NeedMoreData;
 	}
 	
+	return Header.ParseNextBlock( Callbacks, OnGraphicControlBlock, OnCommentBlock, DrawPixels );
 }
 
 
 
-Gif::THeader::THeader(TCallbacks& Callbacks)
+TDecodeResult::Type Gif::THeader::ParseHeader(TCallbacks& Callbacks)
 {
 	auto& OnError = Callbacks.OnError;
 	auto& OnDebug = Callbacks.OnDebug;
-	auto& ReadBytes = Callbacks.ReadBytes;
+	auto& StreamBuffer = Callbacks.mStreamBuffer;
 
 	uint8_t HeaderBytes[13];
-	if ( !ReadBytes(HeaderBytes,sizeof(HeaderBytes) ) )
-	{
-		OnError("Bytes missing for gif header");
-		return;
-	}
+	if ( !StreamBuffer.Pop(HeaderBytes,sizeof(HeaderBytes) ) )
+		return TDecodeResult::NeedMoreData;
+
 	//	support others, but this is fine for now
 	const auto* Magic = "GIF89a";
 	const auto MagicLength = strlen(Magic);
@@ -48,7 +118,7 @@ Gif::THeader::THeader(TCallbacks& Callbacks)
 		Error += (char)HeaderBytes[4];
 		Error += (char)HeaderBytes[5];
 		OnError(Error);
-		return;
+		return TDecodeResult::Error;
 	}
 	
 	mWidth = HeaderBytes[6] | (HeaderBytes[7]<<8);
@@ -68,7 +138,7 @@ Gif::THeader::THeader(TCallbacks& Callbacks)
 	if ( HasPalette && mPaletteSize == 0 )
 	{
 		OnError("Flagged as having a global palette size, and palette size is 0");
-		return;
+		return TDecodeResult::Error;
 	}
 	else if ( !HasPalette )
 	{
@@ -86,18 +156,41 @@ Gif::THeader::THeader(TCallbacks& Callbacks)
 		OnDebug( Debug );
 	}
 	
-	//	read palette
-	auto* Palette8 = &mPalette[0].r;
-	if ( !ReadBytes(Palette8, static_cast<int>( sizeof(TRgb8)*mPaletteSize) ) )
-	{
-		OnError("Missing bytes for palette");
-		return;
-	}
+	return TDecodeResult::Finished;
 }
 
-bool Gif::THeader::ParseNextBlock(TCallbacks& Callbacks,std::function<void()>& OnGraphicControlBlock,std::function<void()>& OnCommentBlock,std::function<void(const TImageBlock&)>& OnImageBlock)
+
+TDecodeResult::Type Gif::THeader::ParseGlobalPalette(TCallbacks& Callbacks)
 {
-	auto& ReadBytes = Callbacks.ReadBytes;
+	auto& StreamBuffer = Callbacks.mStreamBuffer;
+	
+	//	read palette
+	auto* Palette8 = &mPalette[0].r;
+	if ( !StreamBuffer.Pop( Palette8, static_cast<int>( sizeof(TRgb8)*mPaletteSize) ) )
+		return TDecodeResult::NeedMoreData;
+	
+	return TDecodeResult::Finished;
+}
+
+TDecodeResult::Type Gif::THeader::ParseNextBlock(TCallbacks& Callbacks,std::function<void()>& OnGraphicControlBlock,std::function<void()>& OnCommentBlock,std::function<void(const TImageBlock&)>& OnImageBlock)
+{
+	auto& StreamBuffer = Callbacks.mStreamBuffer;
+	
+	//	read byte wrapper so we can unpop
+	size_t ReadCount = 0;
+	std::function<bool(uint8_t*,size_t)> ReadBytes = [&](uint8_t* Buffer,size_t BufferSize)
+	{
+		if ( !StreamBuffer.Pop( Buffer, BufferSize ) )
+			return false;
+		ReadCount += BufferSize;
+		return true;
+	};
+	auto Unpop = [&]()
+	{
+		StreamBuffer.Unpop(ReadCount);
+		return TDecodeResult::NeedMoreData;
+	};
+	
 	auto& OnError = Callbacks.OnError;
 	auto& OnDebug = Callbacks.OnDebug;
 	
@@ -105,7 +198,7 @@ bool Gif::THeader::ParseNextBlock(TCallbacks& Callbacks,std::function<void()>& O
 	if ( !ReadBytes( &BlockId, 1 ) )
 	{
 		OnError("Failed to read block id");
-		return false;
+		return Unpop();
 	}
 	
 	bool ReadTerminator = false;
@@ -113,23 +206,38 @@ bool Gif::THeader::ParseNextBlock(TCallbacks& Callbacks,std::function<void()>& O
 	switch ( BlockId )
 	{
 		case 0x2c:
+		{
 			OnDebug("ParseImageBlock"); 
-			ParseImageBlock( Callbacks, OnImageBlock );
-			break;
+			auto BlockResult = ParseImageBlock( ReadBytes, Callbacks, OnImageBlock );
+			if ( BlockResult == TDecodeResult::Error )
+				return BlockResult;
+			if ( BlockResult == TDecodeResult::NeedMoreData )
+				return Unpop();
+		}
+		break;
 			
 		case 0x21:
+		{
 			OnDebug("ParseExtensionBlock"); 
-			ParseExtensionBlock( Callbacks, OnGraphicControlBlock, OnCommentBlock, ReadTerminator );
-			break;
+			auto BlockResult = ParseExtensionBlock( ReadBytes, Callbacks, OnGraphicControlBlock, OnCommentBlock, ReadTerminator );
+			if ( BlockResult == TDecodeResult::Error )
+				return BlockResult;
+			if ( BlockResult == TDecodeResult::NeedMoreData )
+			{
+				OnDebug("Out of data");
+				return Unpop();
+			}
+		}
+		break;
 			
 		case 0x3b:
 			OnDebug("End Block"); 
 			//	end block, bail out
-			return false;
+			return TDecodeResult::Finished;
 		
 		default:
 			OnError("Unknown block type");
-			return false;
+			return TDecodeResult::Error;
 	}
 
 	uint8_t Terminator = 0xdd;
@@ -140,80 +248,19 @@ bool Gif::THeader::ParseNextBlock(TCallbacks& Callbacks,std::function<void()>& O
 	else
 	{
 		if ( !ReadBytes( &Terminator, 1 ) )
-		{
-			OnError("Block terminator missing");
-			return false;
-		}
+			return Unpop();
 	}
 	
 	if ( Terminator != 0 )
 	{
 		//OnError("Block terminator not zero");
-		return false;
+		return TDecodeResult::Error;
 	}
 	
 	//	more data to go
-	return true;
+	return TDecodeResult::NeedMoreData;
 }
 
-
-namespace Lzw
-{
-	 uint8_t temp_buffer[256];
-#define lzwMaxBits	12
-#define LZW_SIZTABLE  (1 << lzwMaxBits)
-uint8_t stack  [LZW_SIZTABLE];
-uint8_t suffix [LZW_SIZTABLE];
-uint16_t prefix [LZW_SIZTABLE];
-	class Decoder;
-}
-
-class Lzw::Decoder
-{
-public:
-	Decoder(std::function<bool(uint8_t*,size_t)>& ReadBlock,std::function<void(const String&)>& Debug) :
-		readIntoBuffer	( ReadBlock ),
-		Debug			( Debug )
-	{
-		
-	}
-	
-	// LZW variables
-	int bbits = -999;
-	int bbuf = -999;
-	int cursize = -999;                // The current code size
-	int curmask = -999;
-	int codesize = -999;
-	int clear_code = -999;
-	int end_code = -999;
-	int newcodes = -999;               // First available code
-	int top_slot = -999;               // Highest code for current size
-	//int extra_slot = -999;
-	int slot = -999;                   // Last read code
-	int fc = -999;
-	int oc = -999;
-	int bs = -999;                     // Current buffer size for GIF
-	int bcnt = -999;
-	uint8_t *sp = nullptr;
-	//uint8_t * temp_buffer;
-	
-	// Masks for 0 .. 16 bits
-	unsigned int mask[17] = {
-		0x0000, 0x0001, 0x0003, 0x0007,
-		0x000F, 0x001F, 0x003F, 0x007F,
-		0x00FF, 0x01FF, 0x03FF, 0x07FF,
-		0x0FFF, 0x1FFF, 0x3FFF, 0x7FFF,
-		0xFFFF
-	};
-
-	
-	void 	Init(int csize);
-	int		get_code();
-	int 	decode(uint8_t *buf, int len, uint8_t *bufend);
-	
-	std::function<bool(uint8_t*,size_t)>&	readIntoBuffer;
-	std::function<void(const String&)>& Debug;
-};
 
 void Lzw::Decoder::Init(int csize)
 {
@@ -236,7 +283,7 @@ void Lzw::Decoder::Init(int csize)
 }
 
 //  Get one code of given number of bits from stream
-int Lzw::Decoder::get_code()
+bool Lzw::Decoder::get_code(std::function<bool(uint8_t*,size_t)>& ReadBytes,int& Code)
 {
 	static_assert( sizeof(temp_buffer) >= 256, "Temp buffer needs to be 1-byte-max length");
 	while (bbits < cursize)
@@ -245,9 +292,11 @@ int Lzw::Decoder::get_code()
 		{
 			// get number of bytes in next block
 			uint8_t BlockSize;
-			readIntoBuffer(&BlockSize, 1);
+			if ( !ReadBytes(&BlockSize, 1) )
+				return false;
 			bs = BlockSize;
-			readIntoBuffer(temp_buffer, bs);
+			if ( !ReadBytes(temp_buffer, bs) )
+				return false;
 			bcnt = 0;
 		}
 		bbuf |= temp_buffer[bcnt] << bbits;
@@ -257,7 +306,8 @@ int Lzw::Decoder::get_code()
 	int c = bbuf;
 	bbuf >>= cursize;
 	bbits -= cursize;
-	return c & curmask;
+	Code = c & curmask;
+	return true;
 }
 
 
@@ -265,14 +315,15 @@ int Lzw::Decoder::get_code()
 //   buf 8 bit output buffer
 //   len number of pixels to decode
 //   returns the number of bytes decoded
-int Lzw::Decoder::decode(uint8_t *buf, int len, uint8_t *bufend)
+TDecodeResult::Type Lzw::Decoder::decode(uint8_t *buf, int len, uint8_t *bufend,std::function<bool(uint8_t*,size_t)>& ReadBytes,std::function<void(const String&)>& Debug,int& DecodedCount)
 {
 	//	https://arduino-esp8266.readthedocs.io/en/latest/faq/a02-my-esp-crashes.html#what-is-the-cause-of-restart
 	int l, c, code;
 	
 	if (end_code < 0)
 	{
-		return 0;
+		DecodedCount = 0;
+		return TDecodeResult::Finished;
 	}
 	l = len;
 
@@ -293,14 +344,17 @@ int Lzw::Decoder::decode(uint8_t *buf, int len, uint8_t *bufend)
 				// only print this message once per call to lzw_decode
 				if(buf == bufend)
 					Debug("LZW imageData buffer overrun");
-				return 0;
+				DecodedCount = 0;
+				return TDecodeResult::Error;
 			}
 			if ((--l) == 0) 
 			{
-				return len;
+				DecodedCount = len;
+				return TDecodeResult::Finished;
 			}
 		}
-		c = get_code();
+		if ( !get_code( ReadBytes, c ) )
+			return TDecodeResult::NeedMoreData;
 		//Debug("Get_code()");
 		if (c == end_code) 
 		{
@@ -350,36 +404,111 @@ int Lzw::Decoder::decode(uint8_t *buf, int len, uint8_t *bufend)
 				else
 				{
 					Debug("lzw cursize >= lzwMaxBits");
-					return 0;
+					DecodedCount = 0;
+					return TDecodeResult::Error;
 				}
 			}
 		}
 	}
 	end_code = -1;
-	return len - l;
+	DecodedCount = len - l;
+	return TDecodeResult::Finished;
 }
 
-uint8_t RowData[1000];
-TRgb8 LocalPalette[256];
-	
-void Gif::THeader::ParseImageBlock(TCallbacks& Callbacks,std::function<void(const TImageBlock&)>& OnImageBlock)
+
+TDecodeResult::Type Gif::THeader::ParseImageBlockRow(TCallbacks& Callbacks,TPendingImageBlock& Block,bool& FinishedBlock,std::function<void(const TImageBlock&)>& OnImageBlock)
 {
-	auto& ReadBytes = Callbacks.ReadBytes;
-	auto& OnError = Callbacks.OnError;
+	auto& StreamBuffer = Callbacks.mStreamBuffer;
+	
+	//	read byte wrapper so we can unpop
+	size_t ReadCount = 0;
+	std::function<bool(uint8_t*,size_t)> ReadBytes = [&](uint8_t* Buffer,size_t BufferSize)
+	{
+		if ( !StreamBuffer.Pop( Buffer, BufferSize ) )
+			return false;
+		ReadCount += BufferSize;
+		return true;
+	};
+	auto Unpop = [&]()
+	{
+		StreamBuffer.Unpop(ReadCount);
+		return TDecodeResult::NeedMoreData;
+	};
+	
+	
+	auto& Decoder = Block.mLzwDecoder;
+	auto* Palette = Block.mPaletteSize ? Block.mPalette : this->mPalette;
+	auto GetColour = [&](uint8_t ColourIndex)
+	{
+		bool Transparent = this->mTransparentPaletteIndex == ColourIndex;
+		TRgba8 Rgba;
+		Rgba.r = Palette[ColourIndex].r;
+		Rgba.g = Palette[ColourIndex].g;
+		Rgba.b = Palette[ColourIndex].b;
+		Rgba.a = Transparent ? 0 : 255;
+		return Rgba;
+	};
+	
+	uint8_t RowData[Block.mWidth];
+	int DecodedCount;
+	auto Result = Decoder.decode( RowData, Block.mWidth, RowData+sizeof(RowData), ReadBytes, Callbacks.OnDebug, DecodedCount );
+	if ( Result == TDecodeResult::NeedMoreData )
+		return Unpop();
+	if ( Result == TDecodeResult::Error )
+		return Result;
+	
+	//	output block
+	TImageBlock Row;
+	Row.mLeft = Block.mLeft;
+	Row.mTop = Block.mTop + Block.mCurrentRow;
+	Row.mWidth = DecodedCount;
+	Row.mHeight = 1;
+	Row.mPixels = RowData;
+	Row.GetColour = GetColour;
+	OnImageBlock(Row);
+	
+	Block.mCurrentRow++;
+	if ( Block.mCurrentRow >= Block.mHeight )
+		FinishedBlock = true;
+	
+	return TDecodeResult::Finished;
+}
+
+
+TDecodeResult::Type Gif::THeader::ParseImageBlock(std::function<bool(uint8_t*,size_t)>& ReadBytes,TCallbacks& Callbacks,std::function<void(const TImageBlock&)>& OnImageBlock)
+{
+	/*
+	auto& StreamBuffer = Callbacks.mStreamBuffer;
+	
+	//	read byte wrapper so we can unpop
+	size_t ReadCount = 0;
+	std::function<bool(uint8_t*,size_t)> ReadBytes = [&](uint8_t* Buffer,size_t BufferSize)
+	{
+		if ( !StreamBuffer.Pop( Buffer, BufferSize ) )
+			return false;
+		ReadCount += BufferSize;
+		return true;
+	};
+	auto Unpop = [&]()
+	{
+		StreamBuffer.Unpop(ReadCount);
+		return TDecodeResult::NeedMoreData;
+	};
+	*/
 	auto& OnDebug = Callbacks.OnDebug;
 
 	OnDebug("Reading image block header...");
 	uint8_t HeaderBytes[9];
 	if ( !ReadBytes( HeaderBytes, sizeof(HeaderBytes) ) )
 	{
-		OnError("Missing bytes for image block header");
-		return;
+		OnDebug("Missing bytes for image block header");
+		return TDecodeResult::NeedMoreData;
 	}
 	
-	auto BlockLeft = HeaderBytes[0] | (HeaderBytes[1]<<8);
-	auto BlockTop = HeaderBytes[2] | (HeaderBytes[3]<<8);
-	auto BlockWidth = HeaderBytes[4] | (HeaderBytes[5]<<8);
-	auto BlockHeight = HeaderBytes[6] | (HeaderBytes[7]<<8);
+	mPendingImageBlock.mLeft = HeaderBytes[0] | (HeaderBytes[1]<<8);
+	mPendingImageBlock.mTop = HeaderBytes[2] | (HeaderBytes[3]<<8);
+	mPendingImageBlock.mWidth = HeaderBytes[4] | (HeaderBytes[5]<<8);
+	mPendingImageBlock.mHeight = HeaderBytes[6] | (HeaderBytes[7]<<8);
 	
 	auto Flags = HeaderBytes[8];
 	auto HasLocalPalette = (Flags >> 7) & BITCOUNT(1);
@@ -391,15 +520,15 @@ void Gif::THeader::ParseImageBlock(TCallbacks& Callbacks,std::function<void(cons
 	
 	if ( Interlacted )
 	{
-		OnError("Interlaced gif not supported");
-		return;
+		OnDebug("Interlaced gif not supported");
+		return TDecodeResult::Error;
 	}
 	
 	//	read palette
 	if ( HasLocalPalette && PaletteSize == 0 )
 	{
-		OnError("Flagged as having a global palette size, and palette size is 0");
-		return;
+		OnDebug("Flagged as having a global palette size, and palette size is 0");
+		return TDecodeResult::Error;
 	}
 	
 	if ( !HasLocalPalette )
@@ -407,15 +536,17 @@ void Gif::THeader::ParseImageBlock(TCallbacks& Callbacks,std::function<void(cons
 
 	OnDebug( String("Reading local palette x") + IntToString(PaletteSize) );
 	
+	auto& LocalPalette = mPendingImageBlock.mPalette;
 	auto* LocalPalette8 = &LocalPalette[0].r;
 	if ( !ReadBytes( LocalPalette8, sizeof(TRgb8) * PaletteSize ) )
 	{
-		OnError("Missing bytes for image block palette");
-		return;
+		OnDebug("Missing bytes for image block palette");
+		return TDecodeResult::NeedMoreData;
 	}
 	
 	uint8_t LzwMinimumCodeSize;
-	ReadBytes( &LzwMinimumCodeSize, 1 );
+	if ( !ReadBytes( &LzwMinimumCodeSize, 1 ) )
+		return TDecodeResult::NeedMoreData;
 	
 	/*
 	//	https://github.com/pixelmatix/AnimatedGIFs/blob/master/GifDecoder_Impl.h#L557
@@ -438,59 +569,21 @@ void Gif::THeader::ParseImageBlock(TCallbacks& Callbacks,std::function<void(cons
 	}
 	*/
 
-	OnDebug("Initialising lzw decoder");
-	Lzw::Decoder Decoder(ReadBytes, OnDebug );
-	Decoder.Init(LzwMinimumCodeSize);
-	
-	auto* Palette = HasLocalPalette ? LocalPalette : this->mPalette;
-	auto GetColour = [&](uint8_t ColourIndex)
-	{
-		bool Transparent = this->mTransparentPaletteIndex == ColourIndex;
-		TRgba8 Rgba;
-		Rgba.r = Palette[ColourIndex].r;
-		Rgba.g = Palette[ColourIndex].g;
-		Rgba.b = Palette[ColourIndex].b;
-		Rgba.a = Transparent ? 0 : 255;
-		return Rgba;
-	};
-
-	//uint8_t RowData[BlockWidth];
-
-		
-	// Decode the non interlaced LZW data into the image data buffer
-	for (auto y=BlockTop;	y<BlockTop+BlockHeight;	y++)
-	{
-		WDT_YEILD();
-		//int lzw_decode(uint8_t *buf, int len, uint8_t *bufend);
-
-		//lzw_decode( imageData + (y * maxGifWidth) + x, Block.mWidth, imageData + sizeof(imageData) );
-		auto DecodedCount = Decoder.decode( RowData, BlockWidth, RowData+sizeof(RowData) );
-		
-		//	output block
-		TImageBlock Row;
-		Row.mLeft = BlockLeft;
-		Row.mTop = y;
-		Row.mWidth = DecodedCount;
-		Row.mHeight = 1;
-		Row.mPixels = RowData;
-		Row.GetColour = GetColour;
-		OnImageBlock(Row);
-	}
-	
+	mPendingImageBlock.mLzwDecoder.Init(LzwMinimumCodeSize);
+	return TDecodeResult::Finished;
 }
 
 
-void Gif::THeader::ParseExtensionBlock(TCallbacks& Callbacks,std::function<void()>& OnGraphicControlBlock,std::function<void()>& OnCommentBlock,bool& ReadTerminator)
+TDecodeResult::Type Gif::THeader::ParseExtensionBlock(std::function<bool(uint8_t*,size_t)>& ReadBytes,TCallbacks& Callbacks,std::function<void()>& OnGraphicControlBlock,std::function<void()>& OnCommentBlock,bool& ReadTerminator)
 {
 	auto& OnError = Callbacks.OnError;
-	auto& ReadBytes = Callbacks.ReadBytes;
 	
 	//	http://www.onicos.com/staff/iz/formats/gif.html
 	uint8_t Type;	//	label
 	if ( !ReadBytes( &Type, 1 ) )
 	{
 		OnError("Error getting next application type (ood)");
-		return;
+		return TDecodeResult::NeedMoreData;
 	}
 	
 	//	blocks defined by length
@@ -499,8 +592,7 @@ void Gif::THeader::ParseExtensionBlock(TCallbacks& Callbacks,std::function<void(
 		uint8_t BlockSize;
 		if ( !ReadBytes( &BlockSize, 1 ) )
 		{
-			OnError("Error getting next application block size (ood)");
-			return;
+			return TDecodeResult::NeedMoreData;
 		}
 		
 		//	block terminator, unpop!
@@ -512,8 +604,9 @@ void Gif::THeader::ParseExtensionBlock(TCallbacks& Callbacks,std::function<void(
 		
 		if ( !ReadBytes( nullptr, BlockSize ) )
 		{
-			OnError("Error getting next application block data (ood)");
-			return;
+			return TDecodeResult::NeedMoreData;
 		}
 	}
+	
+	return TDecodeResult::Finished;
 }

@@ -18,27 +18,11 @@ void WDT_YEILD()
 	
 }
 
-void OutputGif(const std::vector<uint8_t>& GifData)
+void OutputGif(const std::vector<uint8_t>& GifData_)
 {
-	size_t BytesRead = 0;
-	auto ReadBytes = [&](uint8_t* Buffer,size_t BufferSize)
-	{
-		if ( BytesRead + BufferSize > GifData.size() )
-			return false;
-		
-		//	walking over data if null
-		if ( Buffer != nullptr )
-		{
-			for ( int i=0;	i<BufferSize;	i++ )
-			{
-				Buffer[i] = GifData[BytesRead+i];
-			}
-		}
-		BytesRead += BufferSize;
-		return true;
-	};
+	std::vector<uint8_t> GifData = GifData_;
 	
-	
+	TStreamBuffer StreamBuffer;
 	auto OnDebug = [](const String& Text)
 	{
 		std::cout << Text << std::endl;
@@ -131,13 +115,38 @@ void OutputGif(const std::vector<uint8_t>& GifData)
 		std::cout << std::endl;
 	};
 	
-	
-	TCallbacks Callbacks;
-	Callbacks.ReadBytes = ReadBytes;
+	Gif::THeader GifHeader;
+	TCallbacks Callbacks( StreamBuffer );
 	Callbacks.OnError = OnError;
 	Callbacks.OnDebug = OnDebug;
 	
-	Gif::ParseGif( Callbacks, DrawImageBlock );
+	while ( true )
+	{
+		auto Result = Gif::ParseGif( GifHeader, Callbacks, DrawImageBlock );
+		
+		if ( Result == TDecodeResult::Error )
+			break;
+		if ( Result == TDecodeResult::Finished )
+			break;
+		
+		//	need more data in the buffer
+		if ( Result == TDecodeResult::NeedMoreData )
+		{
+			for ( int i=0;	i<100 && GifData.size()>0;	i++ )
+			{
+				auto Byte = GifData[0];
+				GifData.erase( GifData.begin() );
+				if ( !StreamBuffer.Push(Byte) )
+				{
+					throw std::runtime_error("Streambuffer overflowed");
+				}
+			}
+		}
+		
+	}
+	
+
+	
 }
 
 
