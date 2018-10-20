@@ -41,8 +41,8 @@ void OutputGif(const std::vector<uint8_t>& GifData_)
 	
 	auto DrawImageBlock = [](const TImageBlock& ImageBlock)
 	{
-		if ( ImageBlock.mTop % 4 != 0 )
-			return;
+		//if ( ImageBlock.mTop % 4 != 0 )
+		//	return;
 		//	draw colours
 		auto DrawColor = [&](TRgba8 Colour)
 		{
@@ -94,23 +94,29 @@ void OutputGif(const std::vector<uint8_t>& GifData_)
 			rgba.a = 1;
 			DrawColor( rgba );
 		};
-		auto SubSample = 4;
-		auto Width = std::min<int>( ImageBlock.mWidth, 240*SubSample );
+		auto SubSample = 1;
+		//auto Width = std::min<int>( ImageBlock.mWidth, 240*SubSample );
+		auto Width = std::min<int>( ImageBlock.mWidth, 200 );
+		
 		for ( int x=0;	x<Width;	x+=SubSample )
 		{
-			auto x0 = ImageBlock.mPixels[x+0];
-			auto x1 = ImageBlock.mPixels[x+1];
-			auto x2 = ImageBlock.mPixels[x+2];
-			auto x3 = ImageBlock.mPixels[x+3];
+			auto x0 = std::min( Width-1, x+0 );
+			auto x1 = std::min( Width-1, x+1 );
+			auto x2 = std::min( Width-1, x+2 );
+			auto x3 = std::min( Width-1, x+3 );
+			auto p0 = ImageBlock.mPixels[x0];
+			auto p1 = ImageBlock.mPixels[x1];
+			auto p2 = ImageBlock.mPixels[x2];
+			auto p3 = ImageBlock.mPixels[x3];
 			
 			if ( SubSample == 1 )
-				DrawColor( ImageBlock.GetColour(x0) );
+				DrawColor( ImageBlock.GetColour(p0) );
 			else if ( SubSample == 2 )
-				DrawColor2( x0, x1 );
+				DrawColor2( p0, p1 );
 			else if ( SubSample == 3 )
-				DrawColor3( x0, x1, x2 );
+				DrawColor3( p0, p1, p2 );
 			else if ( SubSample == 4 )
-				DrawColor4( x0, x1, x2, x3 );
+				DrawColor4( p0, p1, p2, p3 );
 		}
 		std::cout << std::endl;
 	};
@@ -200,7 +206,9 @@ int main(int argc, const char * argv[])
 			GifData = Data;
 			Downloaded = true;
 		};
-		GetUrl("https://assets.amuniversal.com/985bb260a4c401365a02005056a9545d",OnDownloaded);
+		//
+		//GetUrl("https://assets.amuniversal.com/985bb260a4c401365a02005056a9545d",OnDownloaded);
+		GetUrl("http://i.giphy.com/media/UaoxTrl8z1wre/giphy.gif",OnDownloaded);
 		
 		while ( !Downloaded )
 		{

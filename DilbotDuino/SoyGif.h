@@ -51,7 +51,7 @@ namespace Lzw
 
 class TStreamBuffer
 {
-	static const size_t BUFFERSIZE = 10000;
+	static const size_t BUFFERSIZE = 2000;
 public:
 	bool	Push(uint8_t Data);
 	bool	Pop(uint8_t* Data,size_t DataSize);

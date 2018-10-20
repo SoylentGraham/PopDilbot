@@ -215,6 +215,8 @@ TDecodeResult::Type Gif::THeader::ParseNextBlock(TCallbacks& Callbacks,std::func
 				return BlockResult;
 			if ( BlockResult == TDecodeResult::NeedMoreData )
 				return Unpop();
+			//	async process the rest of the image block
+			return TDecodeResult::NeedMoreData;
 		}
 		break;
 			
@@ -250,7 +252,7 @@ TDecodeResult::Type Gif::THeader::ParseNextBlock(TCallbacks& Callbacks,std::func
 	
 	if ( Terminator != 0 )
 	{
-		//OnError("Block terminator not zero");
+		OnError("Block terminator not zero");
 		return TDecodeResult::Error;
 	}
 	
@@ -465,7 +467,7 @@ TDecodeResult::Type Gif::THeader::ParseImageBlockRow(TCallbacks& Callbacks,TPend
 	OnImageBlock(Row);
 	
 	Block.mCurrentRow++;
-	if ( Block.mCurrentRow >= Block.mHeight )
+	if ( Block.mCurrentRow > Block.mHeight )
 		FinishedBlock = true;
 	
 	return TDecodeResult::Finished;
@@ -567,6 +569,8 @@ TDecodeResult::Type Gif::THeader::ParseImageBlock(std::function<bool(uint8_t*,si
 	*/
 
 	mPendingImageBlock.mLzwDecoder.Init(LzwMinimumCodeSize);
+	mHasPendingImageBlock = true;
+	mPendingImageBlock.mCurrentRow = 0;
 	return TDecodeResult::Finished;
 }
 
