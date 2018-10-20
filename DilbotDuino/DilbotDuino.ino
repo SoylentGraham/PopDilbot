@@ -1,6 +1,10 @@
 //	using https://github.com/ZinggJM/GxEPD/
 //	commit b59ae551a18b8e2dbeeed1bb62f8197e15554be9
 #include "SoyGif.h"
+
+//#define DISPLAY_ENABLED
+
+#if defined(DISPLAY_ENABLED)
 #include <GxEPD.h>
 
 // select the display class to use, only one
@@ -21,6 +25,7 @@
 
 #include <GxIO/GxIO_SPI/GxIO_SPI.h>
 #include <GxIO/GxIO.h>
+#endif
 
 // for SPI pin definitions see e.g.:
 // C:\Users\xxx\AppData\Local\Arduino15\packages\arduino\hardware\avr\1.6.21\variants\standard\pins_arduino.h
@@ -28,12 +33,15 @@
 //#define BOARD_NANO
 //#define BOARD_NODEMCU
 #define BOARD_MKR1010
+#if defined(DISPLAY_ENABLED)
 #include <Fonts/FreeMonoBold9pt7b.h>
-
+#endif
 
 #if defined(BOARD_NANO)
+#if defined(DISPLAY_ENABLED)
 GxIO_Class io(SPI, /*CS=*/ SS, /*DC=*/ 9, /*RST=*/ 8); // arbitrary selection of 8, 9 selected for default of GxEPD_Class
 GxEPD_Class display(io,8,7 /*RST=9*/ /*BUSY=7*/); // default selection of (9), 7
+#endif
 /*
 [ 2]
 [ 3] 
@@ -51,8 +59,10 @@ GxEPD_Class display(io,8,7 /*RST=9*/ /*BUSY=7*/); // default selection of (9), 7
 #elif defined(BOARD_NODEMCU)
 #include <ESP8266WiFi.h>
 #include <WiFiClient.h>
+#if defined(DISPLAY_ENABLED)
 GxIO_Class io(SPI, /*CS=D8*/ SS, /*DC=D3*/ 0, /*RST=D4*/ 2); // arbitrary selection of D3(=0), D4(=2), selected for default of GxEPD_Class
 GxEPD_Class display(io /*RST=D4*/ /*BUSY=D2*/); // default selection of D4(=2), D2(=4)
+#endif
 /*
 [ 0]
 [ 1] 
@@ -70,14 +80,31 @@ GxEPD_Class display(io /*RST=D4*/ /*BUSY=D2*/); // default selection of D4(=2), 
 //#include <WiFi101.h>
 //#include <WiFiClient.h>
 #include <WiFiNINA.h>
+#if defined(DISPLAY_ENABLED)
 GxIO_Class io(SPI, 7, 2, 1); // arbitrary selection of D3(=0), D4(=2), selected for default of GxEPD_Class
 GxEPD_Class display(io,1,10); // default selection of D4(=2), D2(=4)
-
+#endif
 
 #else
 #error define a board!
 #endif
 
+
+#if !defined(DISPLAY_ENABLED)
+#define GxEPD_WHITE	0
+#define GxEPD_BLACK	1
+#define GxEPD_RED	2
+class TDisplayStub
+{
+public:
+	void	init(int)			{}
+	void	fillScreen(int)		{}
+	void	setRotation(int)	{}
+	void	update()			{}
+	void	drawPixel(int,int,int p)	{	Serial.print(p);	}
+};
+TDisplayStub display;
+#endif
 
 //	https://github.com/ZinggJM/GxEPD/issues/54 :|
 #define ROTATION_0		0
@@ -86,11 +113,43 @@ GxEPD_Class display(io,1,10); // default selection of D4(=2), D2(=4)
 #define ROTATION_270	3
 
 
+template<size_t SIZE>
+class LittleString
+{
+public:
+	LittleString<SIZE>&	Add(const char* Text);
+	LittleString<SIZE>&	Add(const String& Text)
+	{
+		return Add( Text.c_str() );
+	}
+	template<size_t OTHERSIZE>
+	LittleString<SIZE>&	Add(const LittleString<OTHERSIZE>& Text)
+	{
+		return Add( Text.c_str() );
+	}
+
+	template<typename STRING>
+	LittleString<SIZE>&	operator=(const STRING& Text)
+	{
+		Clear();
+		return Add(Text);
+	}
+
+	int					length() const	{	return mUsed;	}
+	LittleString<SIZE>&	Clear()			{	mUsed = 0;	mBuffer[mUsed] = 0;	return *this;	}
+	const char*			c_str() const	{	return &mBuffer[0];	}
+
+	uint16_t			mUsed = 0;
+	char				mBuffer[SIZE] = {0};
+};
+
+typedef void(*TDebugFunc)(const char*);
+
 class TUrl
 {
 public:
-	String	mHost;
-	String	mPath;
+	const char*	mHost = "mHost";
+	const char*	mPath = "mPath";
 	int		mPort = 80;
 };
 
@@ -101,17 +160,37 @@ public:
 	bool	IsHeaderComplete()	{	return mGotHeaders;	}
 	bool	HasError()			{	return mError.length() > 0;	}
 
-	void	Push(char Char,std::function<void(const String&)>& Debug);
+	void	Push(char Char,TDebugFunc& Debug);
 	
 public:
-	String	mError = String();
-	String	mInitialResponse = String();
+	LittleString<40>	mError;
+	bool	mGotInitialResponse = false;
 	String	mCurrentHeaderLine = String();
 	bool	mGotHeaders = false;
-	String	mMimeType = String();
+	//String	mMimeType = String();
 	bool	mChunkedEncoding = false;
 };
 
+
+template<size_t SIZE>
+LittleString<SIZE>&	LittleString<SIZE>::Add(const char* Text)
+{
+	//	walk back over last terminator
+	if ( mUsed > 0 )
+		mUsed--;
+	while ( true )
+	{
+		mBuffer[mUsed] = *Text;
+		mUsed = std::min<uint16_t>( SIZE-1, mUsed+1 );
+		if ( *Text == 0 )
+			break;
+		Text++;
+	}
+	//	ensure terminator exists
+	mBuffer[mUsed] = 0;
+	return *this;
+}
+	
 
 
 namespace TState
@@ -130,6 +209,9 @@ namespace TState
 	};
 }
 
+typedef TState::Type(*TUpdateFunc)(bool);
+
+
 class TApp
 {
 public:
@@ -142,24 +224,24 @@ public:
 	TState::Type	Update_ParseGif(bool FirstCall);
 	TState::Type	Update_DisplayGif(bool FirstCall);
 	
-
-	TState::Type	OnError(const String& Error)
+	template<typename STRING>
+	TState::Type	OnError(const STRING& Error)
 	{
-		Debug( String("Error: ") + Error );
 		mError = Error;
+		Debug( mError.c_str() );
 		return TState::DisplayError;
 	}
-
+	
 public:
-	String		mError;
-	String		mWifiSsid;
-	String		mWifiPassword;
+	LittleString<40>	mError;
+	const char*	mWifiSsid = nullptr;
+	const char*	mWifiPassword = nullptr;
 
 	WiFiClient	mWebClient;
 	TUrl		mGifUrl;
 	THttpFetch	mGifFetch;
 	
-	std::function<void(const String&)>	Debug;
+	TDebugFunc	Debug = nullptr;
 
 	Gif::THeader	mGifHeader;
 	TStreamBuffer	mStreamBuffer;
@@ -176,15 +258,15 @@ TState::Type TApp::Update_ConnectWifi(bool FirstCall)
 	}
 
 	Debug("Connecting to wifi...");
-	Debug( String("Connecting to wifi: ") + mWifiSsid );
-	auto Status = WiFi.begin( mWifiSsid.c_str(), mWifiPassword.c_str() );
+	Debug( LittleString<40>().Add("Connecting to wifi: ").Add(mWifiSsid).c_str() );
+	auto Status = WiFi.begin( mWifiSsid, mWifiPassword );
 	if ( Status == WL_CONNECTED )
 	{
 		Debug("Wifi connected");
 		return TState::GetGifUrl;
 	}
 
-	Debug( String("Wifi status is ") + IntToString(Status) );
+	Debug( (String("Wifi status is ") + IntToString(Status)).c_str() );
 
 	return TState::ConnectToWifi;
 }
@@ -209,10 +291,19 @@ TState::Type TApp::Update_ConnectToGifUrl(bool FirstCall)
 		mWebClient.stop();
 	}
 
-	if ( !mWebClient.connect( mGifUrl.mHost.c_str(), mGifUrl.mPort ) )
+	{
+		String str;
+		str += "Connecting to ";
+		str += mGifUrl.mHost;
+		str += ":";
+		str += mGifUrl.mPort;
+		Debug(str.c_str());
+	}
+
+	if ( !mWebClient.connect( mGifUrl.mHost, mGifUrl.mPort ) )
 		return OnError( String("Failed to connect to ") + mGifUrl.mHost + ":" + IntToString(mGifUrl.mPort) );
 
-	Debug( String("Connected to ") + mGifUrl.mHost + ":" + IntToString(mGifUrl.mPort) );
+	Debug( LittleString<60>().Add("Connected to ").Add(mGifUrl.mHost).c_str() );
 	return TState::GetGifHttpHeaders;
 }
 
@@ -220,13 +311,31 @@ TState::Type TApp::Update_GetGifHttpHeaders(bool FirstCall)
 {
 	if ( FirstCall )
 	{
+		Debug("Update_GetGifHttpHeaders");
 		mGifFetch = THttpFetch();
 
 		//	send request
-		mWebClient.println(String("GET ") + mGifUrl.mPath + " HTTP/1.1");
+		Debug("Sending GET request...");
+		String Req;
+		
+		Req = String("GET ") + String(mGifUrl.mPath) + " HTTP/1.1";
+		Debug(Req.c_str());
+		mWebClient.println(Req);
+		
+		Req = String("Host: ") + mGifUrl.mHost;
+		Debug(Req.c_str());
+		mWebClient.println(Req);
+		
+		mWebClient.println("Connection: close");
+		mWebClient.println();
+		
+		/*
+    	mWebClient.println(String("GET ") + mGifUrl.mPath + " HTTP/1.1");
     	mWebClient.println(String("Host: ") + mGifUrl.mHost );
     	mWebClient.println("Connection: close");
     	mWebClient.println();
+    	*/
+    	Debug("Sent GET request");
 	}
 	
 	//	read bytes as availible, when they're not, let the loop return
@@ -244,13 +353,17 @@ TState::Type TApp::Update_GetGifHttpHeaders(bool FirstCall)
 		
 		if ( mGifFetch.IsHeaderComplete() )
 		{
-			if ( mGifFetch.mMimeType != "image/gif" )
-				return OnError( String("Mime is not image/gif, is ") + mGifFetch.mMimeType );
+			Debug("read headers");
+			//if ( mGifFetch.mMimeType != "image/gif" )
+				//return OnError( String("Mime is not image/gif, is ") + mGifFetch.mMimeType );
 			return TState::ParseGif;
 		}
 
 		if ( mGifFetch.HasError() )
+		{
+			Debug("header error");
 			return OnError( mGifFetch.mError );
+		}
 	}
 	
 	Debug("Waiting for more data...");
@@ -265,12 +378,12 @@ TState::Type TApp::Update_ParseGif(bool FirstCall)
 	{
 		Debug("Initialising gif setup");
 		mStreamBuffer = TStreamBuffer();
-		mGifHeader = Gif::THeader();
+		//mGifHeader = Gif::THeader();
 		display.fillScreen(GxEPD_WHITE);
 	}
 
 	//	read bytes as availible, when they're not, let the loop return
-	if ( !mWebClient.connected() )
+	if ( !mWebClient.available() && !mWebClient.connected() )
 		return OnError("WebClient no longer connected");
 
 	//	read more bytes into the stream buffer
@@ -289,7 +402,7 @@ TState::Type TApp::Update_ParseGif(bool FirstCall)
 			break;
 		}
 
-		if ( mStreamBuffer.Push( NextChar ) )
+		if ( !mStreamBuffer.Push( NextChar ) )
 		{
 			return OnError("Unexpectedly failed to push byte to streambuffer");
 		}		
@@ -318,8 +431,8 @@ TState::Type TApp::Update_ParseGif(bool FirstCall)
 	};	
 
 	TCallbacks Callbacks( mStreamBuffer );
-	Callbacks.OnError = Debug;
-	Callbacks.OnDebug = Debug;
+	Callbacks.OnDebug = [&](const char* t)	{	Debug(t);	};
+	Callbacks.OnError = Callbacks.OnDebug;
 
 	auto Result = Gif::ParseGif( mGifHeader, Callbacks, DrawImageBlock );
 	if ( Result == TDecodeResult::Error )
@@ -342,20 +455,19 @@ TState::Type TApp::Update_DisplayGif(bool FirstCall)
 		Debug("Refreshing display");
 		display.update();
 		auto SleepAfterDisplaySecs = 30;
-		Debug( String("Now sleeping for ") + IntToString(SleepAfterDisplaySecs) + " secs");
+		Debug("Now sleeping for X secs");
 		delay( 1000 * SleepAfterDisplaySecs );
 	}
 
 	return TState::ConnectToWifi;
 }
 
-typedef TState::Type(*TUpdateFunc)(bool);
 
 template<typename STATETYPE>
 class TStateMachine
 {
 public:
-	void		Update(std::function<void(const String&)>& Debug);
+	void		Update(TDebugFunc& Debug);
 
 	STATETYPE	mCurrentState;
 	bool		mCurrentStateFirstCall = true;
@@ -366,7 +478,7 @@ public:
 };
 
 template<typename STATETYPE>
-void TStateMachine<STATETYPE>::Update(std::function<void(const String&)>& Debug)
+void TStateMachine<STATETYPE>::Update(TDebugFunc& Debug)
 {
 	/*
 	for ( int i=0;	i<1000;	i++ )
@@ -374,13 +486,13 @@ void TStateMachine<STATETYPE>::Update(std::function<void(const String&)>& Debug)
 		Serial.println( String("Hello ") + IntToString(i) );
 	}
 	*/
-	Debug( String("current state = ") + IntToString(mCurrentState) );
+	Debug( (String("current state = ") + IntToString(mCurrentState)).c_str() );
 	//delay(1000*1);
 	
 	auto& StateUpdate = mUpdates[mCurrentState];
 	if ( StateUpdate == nullptr )
 	{
-		Debug( String("Null state #") + IntToString(mCurrentState) );
+		Debug( (String("Null state #") + IntToString(mCurrentState)).c_str() );
 		delay(1000*10);
 		return;
 	}
@@ -407,7 +519,7 @@ bool TrimLineFeed(String& Line)
 	return true;
 }
 	
-void THttpFetch::Push(char Char,std::function<void(const String&)>& Debug)
+void THttpFetch::Push(char Char,TDebugFunc& Debug)
 {
 	mCurrentHeaderLine += Char;
 
@@ -421,17 +533,17 @@ void THttpFetch::Push(char Char,std::function<void(const String&)>& Debug)
 	const char* Response200Key = "HTTP/1.1 200";
 
 	//	waiting for initial response
-	if ( mInitialResponse.length() == 0 )
+	if ( !mGotInitialResponse )
 	{
-		mInitialResponse = mCurrentHeaderLine;
-		if ( !mInitialResponse.startsWith(Response200Key) )
+		if ( !mCurrentHeaderLine.startsWith(Response200Key) )
 		{
 			mError = "Response was not ";
-			mError += Response200Key;
-			mError += ": ";
-			mError += mInitialResponse;
+			mError.Add(Response200Key);
+			mError.Add(": ");
+			mError.Add(mCurrentHeaderLine);
 			return;
 		}
+		mGotInitialResponse = true;
 		mCurrentHeaderLine = String();
 		return;		
 	}
@@ -449,7 +561,7 @@ void THttpFetch::Push(char Char,std::function<void(const String&)>& Debug)
 	}
 	else if ( mCurrentHeaderLine.startsWith(ContentTypeKey) )
 	{		
-		mMimeType = mCurrentHeaderLine.substring( strlen(ContentTypeKey) );
+		//mMimeType = mCurrentHeaderLine.substring( strlen(ContentTypeKey) );
 	}
 	else if ( mCurrentHeaderLine.length() == 0 )
 	{
@@ -457,7 +569,9 @@ void THttpFetch::Push(char Char,std::function<void(const String&)>& Debug)
 	}
 	else
 	{
-		Debug("Skipped header: [" + mCurrentHeaderLine  + "]x" + IntToString(mCurrentHeaderLine.length()));
+		//Debug("Skipped header: [" + mCurrentHeaderLine  + "]x" + IntToString(mCurrentHeaderLine.length()));
+		Debug("Skipped header: ");
+		Debug( mCurrentHeaderLine.c_str() );
 	}
 
 	//	done with this header line
@@ -502,17 +616,17 @@ void setup()
 
 	App.mWifiSsid = "ZaegerMeister";
 	App.mWifiPassword = "InTheYear2525";
-	App.Debug = [&](const String& Text)
+	App.Debug = [&](const char* Text)
 	{
 		Serial.println(Text);
 	};
 
 	AppState.mUpdates[TState::ConnectToWifi] = [&](bool FirstCall)		{	return App.Update_ConnectWifi(FirstCall);	};
-	//AppState.mUpdates[TState::GetGifUrl] = [&](bool FirstCall)			{	return App.Update_GetGifUrl(FirstCall);	};
-	//AppState.mUpdates[TState::ConnectToGifUrl] = [&](bool FirstCall)	{	return App.Update_ConnectToGifUrl(FirstCall);	};
-	//AppState.mUpdates[TState::GetGifHttpHeaders] = [&](bool FirstCall)	{	return App.Update_GetGifHttpHeaders(FirstCall);	};
-	//AppState.mUpdates[TState::ParseGif] = [&](bool FirstCall)			{	return App.Update_ParseGif(FirstCall);	};
-	//AppState.mUpdates[TState::DisplayGif] = [&](bool FirstCall)			{	return App.Update_DisplayGif(FirstCall);	};
+	AppState.mUpdates[TState::GetGifUrl] = [&](bool FirstCall)			{	return App.Update_GetGifUrl(FirstCall);	};
+	AppState.mUpdates[TState::ConnectToGifUrl] = [&](bool FirstCall)	{	return App.Update_ConnectToGifUrl(FirstCall);	};
+	AppState.mUpdates[TState::GetGifHttpHeaders] = [&](bool FirstCall)	{	return App.Update_GetGifHttpHeaders(FirstCall);	};
+	AppState.mUpdates[TState::ParseGif] = [&](bool FirstCall)			{	return App.Update_ParseGif(FirstCall);	};
+	AppState.mUpdates[TState::DisplayGif] = [&](bool FirstCall)			{	return App.Update_DisplayGif(FirstCall);	};
 	//AppState.mUpdates[TState::DisplayError] = [&](bool FirstCall)		{	return App.Update_DisplayError(FirstCall);	};
 	AppState.mCurrentState = TState::ConnectToWifi;
 }

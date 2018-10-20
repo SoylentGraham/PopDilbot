@@ -126,7 +126,7 @@ TDecodeResult::Type Gif::THeader::ParseHeader(TCallbacks& Callbacks)
 		Error += (char)HeaderBytes[3];
 		Error += (char)HeaderBytes[4];
 		Error += (char)HeaderBytes[5];
-		OnError(Error);
+		OnError(Error.c_str());
 		return TDecodeResult::Error;
 	}
 	
@@ -162,7 +162,7 @@ TDecodeResult::Type Gif::THeader::ParseHeader(TCallbacks& Callbacks)
 		Debug += IntToString( static_cast<int>(mHeight) );
 		Debug += ". Global palette size: ";
 		Debug += IntToString( static_cast<int>(mPaletteSize) );
-		OnDebug( Debug );
+		OnDebug( Debug.c_str() );
 	}
 	
 	return TDecodeResult::Finished;
@@ -289,7 +289,7 @@ void Lzw::Decoder::Init(int csize)
 //  Get one code of given number of bits from stream
 bool Lzw::Decoder::get_code(std::function<bool(uint8_t*,size_t)>& ReadBytes,int& Code)
 {
-	static_assert( sizeof(temp_buffer) >= 256, "Temp buffer needs to be 1-byte-max length");
+	//static_assert( sizeof(temp_buffer) >= 256, "Temp buffer needs to be 1-byte-max length");
 	while (bbits < cursize)
 	{
 		if (bcnt == bs)
@@ -319,7 +319,7 @@ bool Lzw::Decoder::get_code(std::function<bool(uint8_t*,size_t)>& ReadBytes,int&
 //   buf 8 bit output buffer
 //   len number of pixels to decode
 //   returns the number of bytes decoded
-TDecodeResult::Type Lzw::Decoder::decode(uint8_t *buf, int len, uint8_t *bufend,std::function<bool(uint8_t*,size_t)>& ReadBytes,std::function<void(const String&)>& Debug,int& DecodedCount)
+TDecodeResult::Type Lzw::Decoder::decode(uint8_t *buf, int len, uint8_t *bufend,std::function<bool(uint8_t*,size_t)>& ReadBytes,std::function<void(const char*)>& Debug,int& DecodedCount)
 {
 	//	https://arduino-esp8266.readthedocs.io/en/latest/faq/a02-my-esp-crashes.html#what-is-the-cause-of-restart
 	int l, c, code;
@@ -440,7 +440,8 @@ TDecodeResult::Type Gif::THeader::ParseImageBlockRow(TCallbacks& Callbacks,TPend
 	
 	
 	auto& Decoder = Block.mLzwDecoder;
-	auto* Palette = Block.mPaletteSize ? Block.mPalette.mColours : this->mPalette.mColours;
+	//auto* Palette = Block.mPaletteSize ? Block.mPalette.mColours : this->mPalette.mColours;
+	auto* Palette = this->mPalette.mColours;
 	auto GetColour = [&](uint8_t ColourIndex)
 	{
 		bool Transparent = this->mTransparentPaletteIndex == ColourIndex;
@@ -551,10 +552,11 @@ TDecodeResult::Type Gif::THeader::ParseImageBlock(std::function<bool(uint8_t*,si
 	if ( !HasLocalPalette )
 		PaletteSize = 0;
 
-	OnDebug( String("Reading local palette x") + IntToString(PaletteSize) );
-	
-	auto& LocalPalette = mPendingImageBlock.mPalette.mColours;
-	auto* LocalPalette8 = &LocalPalette[0].r;
+	OnDebug( (String("Reading local palette x") + IntToString(PaletteSize)).c_str() );
+
+	//auto& LocalPalette = mPendingImageBlock.mPalette.mColours;
+	//auto* LocalPalette8 = &LocalPalette[0].r;
+	uint8_t* LocalPalette8 = nullptr;
 	if ( !ReadBytes( LocalPalette8, sizeof(TRgb8) * PaletteSize ) )
 	{
 		OnDebug("Missing bytes for image block palette");

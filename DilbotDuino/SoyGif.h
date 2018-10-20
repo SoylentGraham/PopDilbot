@@ -106,7 +106,7 @@ public:
 	
 	void 					Init(int csize);
 	bool					get_code(std::function<bool(uint8_t*,size_t)>& ReadBytes,int& Code);
-	TDecodeResult::Type 	decode(uint8_t *buf, int len, uint8_t *bufend,std::function<bool(uint8_t*,size_t)>& ReadBytes,std::function<void(const String&)>& Debug,int& DecodedCount);
+	TDecodeResult::Type 	decode(uint8_t *buf, int len, uint8_t *bufend,std::function<bool(uint8_t*,size_t)>& ReadBytes,std::function<void(const char*)>& Debug,int& DecodedCount);
 	/*
 	std::function<bool(uint8_t*,size_t)>&	readIntoBuffer;
 	std::function<void(const String&)>& Debug;
@@ -132,10 +132,9 @@ public:
 class TPendingImageBlock
 {
 public:
-	uint8_t			mHeader[9];
-	size_t			mPaletteSize;
-	TPalette		mPalette;
-	size_t			mCurrentRow;
+	uint8_t			mPaletteSize;
+	//TPalette		mPalette;
+	uint16_t		mCurrentRow;
 	Lzw::Decoder	mLzwDecoder;
 	
 	uint16_t	mLeft;
@@ -163,8 +162,8 @@ public:
 	{
 	}
 	TStreamBuffer&						mStreamBuffer;
-	std::function<void(const String&)>	OnError;
-	std::function<void(const String&)>	OnDebug;
+	std::function<void(const char*)>	OnError;
+	std::function<void(const char*)>	OnDebug;
 };
 
 //	for use on arduino, so no exceptions, error func instead
@@ -182,15 +181,15 @@ public:
 	TDecodeResult::Type		ParseExtensionBlockChunk(TStreamBuffer& StreamBuffer);
 
 public:
+	bool		mHasPendingImageBlock = false;
 	bool		mGotHeader = false;
-	size_t		mPaletteSize;
-	size_t		mWidth;
-	size_t		mHeight;
+	uint8_t		mPaletteSize;
 	uint8_t		mTransparentPaletteIndex;
 	bool		mGotPalette = false;
+	uint8_t		mPendingExtensionBlockType = 0x0;	//	when non zero, we're eating chunks from the block
+	uint16_t	mWidth;
+	uint16_t	mHeight;
+	TPendingImageBlock	mPendingImageBlock;
 	TPalette	mPalette;	//	global/default palette
 	//TPalette&	mPalette = mPendingImageBlock.mPalette;
-	bool		mHasPendingImageBlock = false;
-	TPendingImageBlock	mPendingImageBlock;
-	uint8_t		mPendingExtensionBlockType = 0x0;	//	when non zero, we're eating chunks from the block
 };
