@@ -125,7 +125,8 @@ void OutputGif(const std::vector<uint8_t>& GifData_)
 		auto Result = Gif::ParseGif( GifHeader, Callbacks, DrawImageBlock );
 		
 		if ( Result == TDecodeResult::Error )
-			break;
+			throw std::runtime_error("ParseGif error");
+		
 		if ( Result == TDecodeResult::Finished )
 			break;
 		

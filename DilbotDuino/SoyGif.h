@@ -51,7 +51,7 @@ namespace Lzw
 
 class TStreamBuffer
 {
-	static const size_t BUFFERSIZE = 1000;
+	static const size_t BUFFERSIZE = 10000;
 public:
 	bool	Push(uint8_t Data);
 	bool	Pop(uint8_t* Data,size_t DataSize);
@@ -168,11 +168,12 @@ public:
 	TDecodeResult::Type		ParseHeader(TCallbacks& Callbacks);
 	TDecodeResult::Type		ParseGlobalPalette(TCallbacks& Callbacks);
 
-	TDecodeResult::Type		ParseNextBlock(TCallbacks& Callbacks,std::function<void()>& OnGraphicControlBlock,std::function<void()>& OnCommentBlock,std::function<void(const TImageBlock&)>& OnImageBlock);
+	TDecodeResult::Type		ParseNextBlock(TCallbacks& Callbacks,std::function<void(const TImageBlock&)>& OnImageBlock);
 
 	TDecodeResult::Type		ParseImageBlockRow(TCallbacks& Callbacks,TPendingImageBlock& Block,bool& FinishedBlock,std::function<void(const TImageBlock&)>& OnImageBlock);
 	TDecodeResult::Type		ParseImageBlock(std::function<bool(uint8_t*,size_t)>& ReadBytes,TCallbacks& Callbacks,std::function<void(const TImageBlock&)>& OnImageBlock);
-	TDecodeResult::Type		ParseExtensionBlock(std::function<bool(uint8_t*,size_t)>& ReadBytes,TCallbacks& Callbacks,std::function<void()>& OnGraphicControlBlock,std::function<void()>& OnCommentBlock,bool& ReadTerminator);
+	TDecodeResult::Type		ParseExtensionBlock(std::function<bool(uint8_t*,size_t)>& ReadBytes,TCallbacks& Callbacks);
+	TDecodeResult::Type		ParseExtensionBlockChunk(TStreamBuffer& StreamBuffer);
 
 public:
 	bool		mGotHeader = false;
@@ -184,4 +185,5 @@ public:
 	TRgb8		mPalette[256];	//	global/default palette
 	bool		mHasPendingImageBlock = false;
 	TPendingImageBlock	mPendingImageBlock;
+	uint8_t		mPendingExtensionBlockType = 0x0;	//	when non zero, we're eating chunks from the block
 };

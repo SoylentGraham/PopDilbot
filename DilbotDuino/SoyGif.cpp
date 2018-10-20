@@ -7,6 +7,7 @@ extern void WDT_YEILD();
 bool TStreamBuffer::Push(uint8_t Data)
 {
 	auto CurrentBufferSize = GetBufferSize();
+	//	gr: something wrong with the algo here I think, capacity should be 100% :)
 	if ( CurrentBufferSize == BUFFERSIZE-1 )
 		return false;
 	mBuffer[mBufferTail] = Data;
@@ -70,13 +71,6 @@ TDecodeResult::Type Gif::ParseGif(Gif::THeader& Header,TCallbacks& Callbacks,std
 		Header.mGotPalette = true;
 	}
 	
-	std::function<void()> OnGraphicControlBlock = []
-	{
-	};
-	std::function<void()> OnCommentBlock = []
-	{
-	};
-	
 	//	continue a pending image block
 	if ( Header.mHasPendingImageBlock )
 	{
@@ -90,7 +84,17 @@ TDecodeResult::Type Gif::ParseGif(Gif::THeader& Header,TCallbacks& Callbacks,std
 		return TDecodeResult::NeedMoreData;
 	}
 	
-	return Header.ParseNextBlock( Callbacks, OnGraphicControlBlock, OnCommentBlock, DrawPixels );
+	if ( Header.mPendingExtensionBlockType != 0 )
+	{
+		auto Result = Header.ParseExtensionBlockChunk( Callbacks.mStreamBuffer );
+		if ( Result != TDecodeResult::Finished )
+			return Result;
+		
+		Header.mPendingExtensionBlockType = 0x0;
+		return TDecodeResult::NeedMoreData;
+	}
+	
+	return Header.ParseNextBlock( Callbacks, DrawPixels );
 }
 
 
@@ -172,7 +176,7 @@ TDecodeResult::Type Gif::THeader::ParseGlobalPalette(TCallbacks& Callbacks)
 	return TDecodeResult::Finished;
 }
 
-TDecodeResult::Type Gif::THeader::ParseNextBlock(TCallbacks& Callbacks,std::function<void()>& OnGraphicControlBlock,std::function<void()>& OnCommentBlock,std::function<void(const TImageBlock&)>& OnImageBlock)
+TDecodeResult::Type Gif::THeader::ParseNextBlock(TCallbacks& Callbacks,std::function<void(const TImageBlock&)>& OnImageBlock)
 {
 	auto& StreamBuffer = Callbacks.mStreamBuffer;
 	
@@ -201,8 +205,6 @@ TDecodeResult::Type Gif::THeader::ParseNextBlock(TCallbacks& Callbacks,std::func
 		return Unpop();
 	}
 	
-	bool ReadTerminator = false;
-	
 	switch ( BlockId )
 	{
 		case 0x2c:
@@ -219,7 +221,7 @@ TDecodeResult::Type Gif::THeader::ParseNextBlock(TCallbacks& Callbacks,std::func
 		case 0x21:
 		{
 			OnDebug("ParseExtensionBlock"); 
-			auto BlockResult = ParseExtensionBlock( ReadBytes, Callbacks, OnGraphicControlBlock, OnCommentBlock, ReadTerminator );
+			auto BlockResult = ParseExtensionBlock( ReadBytes, Callbacks );
 			if ( BlockResult == TDecodeResult::Error )
 				return BlockResult;
 			if ( BlockResult == TDecodeResult::NeedMoreData )
@@ -227,6 +229,8 @@ TDecodeResult::Type Gif::THeader::ParseNextBlock(TCallbacks& Callbacks,std::func
 				OnDebug("Out of data");
 				return Unpop();
 			}
+			//	process next chunks async
+			return TDecodeResult::NeedMoreData;
 		}
 		break;
 			
@@ -241,15 +245,8 @@ TDecodeResult::Type Gif::THeader::ParseNextBlock(TCallbacks& Callbacks,std::func
 	}
 
 	uint8_t Terminator = 0xdd;
-	if ( ReadTerminator )
-	{
-		Terminator = 0;
-	}
-	else
-	{
-		if ( !ReadBytes( &Terminator, 1 ) )
-			return Unpop();
-	}
+	if ( !ReadBytes( &Terminator, 1 ) )
+		return Unpop();
 	
 	if ( Terminator != 0 )
 	{
@@ -574,7 +571,7 @@ TDecodeResult::Type Gif::THeader::ParseImageBlock(std::function<bool(uint8_t*,si
 }
 
 
-TDecodeResult::Type Gif::THeader::ParseExtensionBlock(std::function<bool(uint8_t*,size_t)>& ReadBytes,TCallbacks& Callbacks,std::function<void()>& OnGraphicControlBlock,std::function<void()>& OnCommentBlock,bool& ReadTerminator)
+TDecodeResult::Type Gif::THeader::ParseExtensionBlock(std::function<bool(uint8_t*,size_t)>& ReadBytes,TCallbacks& Callbacks)
 {
 	auto& OnError = Callbacks.OnError;
 	
@@ -586,24 +583,27 @@ TDecodeResult::Type Gif::THeader::ParseExtensionBlock(std::function<bool(uint8_t
 		return TDecodeResult::NeedMoreData;
 	}
 	
+	mPendingExtensionBlockType = Type;
+	return TDecodeResult::Finished;
+}
+
+TDecodeResult::Type Gif::THeader::ParseExtensionBlockChunk(TStreamBuffer& StreamBuffer)
+{
 	//	blocks defined by length
 	while ( true )
 	{
 		uint8_t BlockSize;
-		if ( !ReadBytes( &BlockSize, 1 ) )
-		{
+		if ( !StreamBuffer.Pop( &BlockSize, 1 ) )
 			return TDecodeResult::NeedMoreData;
-		}
 		
-		//	block terminator, unpop!
+		//	block terminator
 		if ( BlockSize == 0 )
-		{
-			ReadTerminator = true;
 			break;
-		}
 		
-		if ( !ReadBytes( nullptr, BlockSize ) )
+		if ( !StreamBuffer.Pop( nullptr, BlockSize ) )
 		{
+			//	unpop the block size
+			StreamBuffer.Unpop(1);
 			return TDecodeResult::NeedMoreData;
 		}
 	}
