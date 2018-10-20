@@ -91,9 +91,9 @@ GxEPD_Class display(io,1,10); // default selection of D4(=2), D2(=4)
 
 
 #if !defined(DISPLAY_ENABLED)
-#define GxEPD_WHITE	0
-#define GxEPD_BLACK	1
-#define GxEPD_RED	2
+#define GxEPD_WHITE	' '
+#define GxEPD_BLACK	'#'
+#define GxEPD_RED	';'
 class TDisplayStub
 {
 public:
@@ -101,7 +101,7 @@ public:
 	void	fillScreen(int)		{}
 	void	setRotation(int)	{}
 	void	update()			{}
-	void	drawPixel(int,int,int p)	{	Serial.print(p);	}
+	void	drawPixel(int,int,char p)	{	Serial.print(p);	}
 };
 TDisplayStub display;
 #endif
@@ -382,10 +382,6 @@ TState::Type TApp::Update_ParseGif(bool FirstCall)
 		display.fillScreen(GxEPD_WHITE);
 	}
 
-	//	read bytes as availible, when they're not, let the loop return
-	if ( !mWebClient.available() && !mWebClient.connected() )
-		return OnError("WebClient no longer connected");
-
 	//	read more bytes into the stream buffer
 	while ( true )
 	{
@@ -405,7 +401,7 @@ TState::Type TApp::Update_ParseGif(bool FirstCall)
 		if ( !mStreamBuffer.Push( NextChar ) )
 		{
 			return OnError("Unexpectedly failed to push byte to streambuffer");
-		}		
+		}
 	}
 
 	auto DrawImageBlock = [](const TImageBlock& ImageBlock)
@@ -428,6 +424,7 @@ TState::Type TApp::Update_ParseGif(bool FirstCall)
 			auto Colour0 = ImageBlock.GetColour(p0);
 			DrawColor( x, y, Colour0 );
 		}
+		Serial.println();
 	};	
 
 	TCallbacks Callbacks( mStreamBuffer );
@@ -442,9 +439,20 @@ TState::Type TApp::Update_ParseGif(bool FirstCall)
 		return TState::DisplayGif;
 		
 	//	need more data in the buffer
+	//	gr: or need to re-process, in lzw case, we don't even need more bytes sometimes
 	if ( Result == TDecodeResult::NeedMoreData )
+	{
+		/*
+		if ( !mWebClient.available() && !mWebClient.connected() )
+		{
+			Debug( (String("data left in buffer x") + IntToString(mStreamBuffer.GetBufferSize() )).c_str() );
+			return OnError("WebClient no longer connected");
+		}	
+		*/
+		//Debug( (String("need more, left in buffer x") + IntToString(mStreamBuffer.GetBufferSize() )).c_str() );
 		return TState::ParseGif;
-
+	}
+	
 	return OnError("ParseGif unexpected result");
 }
 
@@ -486,7 +494,7 @@ void TStateMachine<STATETYPE>::Update(TDebugFunc& Debug)
 		Serial.println( String("Hello ") + IntToString(i) );
 	}
 	*/
-	Debug( (String("current state = ") + IntToString(mCurrentState)).c_str() );
+	//Debug( (String("current state = ") + IntToString(mCurrentState)).c_str() );
 	//delay(1000*1);
 	
 	auto& StateUpdate = mUpdates[mCurrentState];
@@ -633,8 +641,8 @@ void setup()
 
 void loop()
 {
-	delay(500);
-	App.Debug("Loop");
+	//delay(500);
+	//App.Debug("Loop");
 	AppState.Update( App.Debug );
 }
 
