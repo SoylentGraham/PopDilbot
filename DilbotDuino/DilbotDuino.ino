@@ -70,8 +70,8 @@ GxEPD_Class display(io /*RST=D4*/ /*BUSY=D2*/); // default selection of D4(=2), 
 //#include <WiFi101.h>
 //#include <WiFiClient.h>
 #include <WiFiNINA.h>
-GxIO_Class io(SPI, 7, 6, 11); // arbitrary selection of D3(=0), D4(=2), selected for default of GxEPD_Class
-GxEPD_Class display(io,11,10); // default selection of D4(=2), D2(=4)
+GxIO_Class io(SPI, 7, 2, 1); // arbitrary selection of D3(=0), D4(=2), selected for default of GxEPD_Class
+GxEPD_Class display(io,1,10); // default selection of D4(=2), D2(=4)
 
 
 #else
@@ -175,6 +175,8 @@ TState::Type TApp::Update_ConnectWifi(bool FirstCall)
 		delay(1000);
 	}
 
+	Debug("Connecting to wifi...");
+	Debug( String("Connecting to wifi: ") + mWifiSsid );
 	auto Status = WiFi.begin( mWifiSsid.c_str(), mWifiPassword.c_str() );
 	if ( Status == WL_CONNECTED )
 	{
@@ -347,6 +349,8 @@ TState::Type TApp::Update_DisplayGif(bool FirstCall)
 	return TState::ConnectToWifi;
 }
 
+typedef TState::Type(*TUpdateFunc)(bool);
+
 template<typename STATETYPE>
 class TStateMachine
 {
@@ -355,14 +359,24 @@ public:
 
 	STATETYPE	mCurrentState;
 	bool		mCurrentStateFirstCall = true;
-	std::function<STATETYPE(bool)>	mUpdates[STATETYPE::COUNT];
+
+	//	gr: this seems to solve dodgy execution... not sure if it eats up a lot of ram?
+	TUpdateFunc	mUpdates[STATETYPE::COUNT];
+	//std::function<STATETYPE(bool)>	mUpdates[STATETYPE::COUNT];
 };
 
 template<typename STATETYPE>
 void TStateMachine<STATETYPE>::Update(std::function<void(const String&)>& Debug)
 {
+	/*
+	for ( int i=0;	i<1000;	i++ )
+	{
+		Serial.println( String("Hello ") + IntToString(i) );
+	}
+	*/
 	Debug( String("current state = ") + IntToString(mCurrentState) );
-
+	//delay(1000*1);
+	
 	auto& StateUpdate = mUpdates[mCurrentState];
 	if ( StateUpdate == nullptr )
 	{
@@ -476,13 +490,13 @@ TStateMachine<TState::Type> AppState;
 
 void setup()
 {
-	delay(5000);
-	Serial.begin(115200);
+	#define SERIAL_BAUD	57600
+	delay(1000);
+	Serial.begin(SERIAL_BAUD);
 	Serial.println();
 	
 	Serial.println("Initialising display...");
-	delay(5000);
-	display.init(115200);	// enable diagnostic output on Serial
+	display.init(SERIAL_BAUD);	// enable diagnostic output on Serial
 	display.setRotation(ROTATION_90);
 
 
@@ -494,9 +508,9 @@ void setup()
 	};
 
 	AppState.mUpdates[TState::ConnectToWifi] = [&](bool FirstCall)		{	return App.Update_ConnectWifi(FirstCall);	};
-	AppState.mUpdates[TState::GetGifUrl] = [&](bool FirstCall)			{	return App.Update_GetGifUrl(FirstCall);	};
-	AppState.mUpdates[TState::ConnectToGifUrl] = [&](bool FirstCall)	{	return App.Update_ConnectToGifUrl(FirstCall);	};
-	AppState.mUpdates[TState::GetGifHttpHeaders] = [&](bool FirstCall)	{	return App.Update_GetGifHttpHeaders(FirstCall);	};
+	//AppState.mUpdates[TState::GetGifUrl] = [&](bool FirstCall)			{	return App.Update_GetGifUrl(FirstCall);	};
+	//AppState.mUpdates[TState::ConnectToGifUrl] = [&](bool FirstCall)	{	return App.Update_ConnectToGifUrl(FirstCall);	};
+	//AppState.mUpdates[TState::GetGifHttpHeaders] = [&](bool FirstCall)	{	return App.Update_GetGifHttpHeaders(FirstCall);	};
 	//AppState.mUpdates[TState::ParseGif] = [&](bool FirstCall)			{	return App.Update_ParseGif(FirstCall);	};
 	//AppState.mUpdates[TState::DisplayGif] = [&](bool FirstCall)			{	return App.Update_DisplayGif(FirstCall);	};
 	//AppState.mUpdates[TState::DisplayError] = [&](bool FirstCall)		{	return App.Update_DisplayError(FirstCall);	};
@@ -505,6 +519,7 @@ void setup()
 
 void loop()
 {
+	delay(500);
 	App.Debug("Loop");
 	AppState.Update( App.Debug );
 }

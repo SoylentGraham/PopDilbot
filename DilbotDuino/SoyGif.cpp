@@ -1,6 +1,4 @@
 #include "SoyGif.h"
-extern void WDT_YEILD();
-
 
 
 bool TStreamBuffer::HasSpace()
@@ -176,7 +174,7 @@ TDecodeResult::Type Gif::THeader::ParseGlobalPalette(TCallbacks& Callbacks)
 	auto& StreamBuffer = Callbacks.mStreamBuffer;
 	
 	//	read palette
-	auto* Palette8 = &mPalette[0].r;
+	auto* Palette8 = &mPalette.mColours[0].r;
 	if ( !StreamBuffer.Pop( Palette8, static_cast<int>( sizeof(TRgb8)*mPaletteSize) ) )
 		return TDecodeResult::NeedMoreData;
 	
@@ -338,7 +336,6 @@ TDecodeResult::Type Lzw::Decoder::decode(uint8_t *buf, int len, uint8_t *bufend,
 	{
 		//Debug( String("lzw LoopCount=") + IntToString(LoopCount) );
 		LoopCount++;
-		WDT_YEILD();
 		while (sp > stack) 
 		{
 			// load buf with data if we're still within bounds
@@ -389,7 +386,6 @@ TDecodeResult::Type Lzw::Decoder::decode(uint8_t *buf, int len, uint8_t *bufend,
 			while (code >= newcodes)
 			{
 				//Debug( String("while (code[") + IntToString(code) +"/" + IntToString(LZW_SIZTABLE) + " >= newcodes) {");
-				WDT_YEILD();
 				*sp++ = suffix[code];
 				code = prefix[code];
 			}
@@ -444,7 +440,7 @@ TDecodeResult::Type Gif::THeader::ParseImageBlockRow(TCallbacks& Callbacks,TPend
 	
 	
 	auto& Decoder = Block.mLzwDecoder;
-	auto* Palette = Block.mPaletteSize ? Block.mPalette : this->mPalette;
+	auto* Palette = Block.mPaletteSize ? Block.mPalette.mColours : this->mPalette.mColours;
 	auto GetColour = [&](uint8_t ColourIndex)
 	{
 		bool Transparent = this->mTransparentPaletteIndex == ColourIndex;
@@ -557,7 +553,7 @@ TDecodeResult::Type Gif::THeader::ParseImageBlock(std::function<bool(uint8_t*,si
 
 	OnDebug( String("Reading local palette x") + IntToString(PaletteSize) );
 	
-	auto& LocalPalette = mPendingImageBlock.mPalette;
+	auto& LocalPalette = mPendingImageBlock.mPalette.mColours;
 	auto* LocalPalette8 = &LocalPalette[0].r;
 	if ( !ReadBytes( LocalPalette8, sizeof(TRgb8) * PaletteSize ) )
 	{

@@ -123,12 +123,18 @@ namespace Gif
 	TDecodeResult::Type	ParseGif(Gif::THeader& Header,TCallbacks& Callbacks,std::function<void(const TImageBlock&)> DrawPixels);
 }
 
+class TPalette
+{
+public:
+	TRgb8		mColours[256];
+};
+
 class TPendingImageBlock
 {
 public:
 	uint8_t			mHeader[9];
 	size_t			mPaletteSize;
-	TRgb8			mPalette[256];
+	TPalette		mPalette;
 	size_t			mCurrentRow;
 	Lzw::Decoder	mLzwDecoder;
 	
@@ -136,7 +142,6 @@ public:
 	uint16_t	mTop;
 	uint16_t	mWidth;
 	uint16_t	mHeight;
-
 };
 
 class TImageBlock
@@ -183,7 +188,8 @@ public:
 	size_t		mHeight;
 	uint8_t		mTransparentPaletteIndex;
 	bool		mGotPalette = false;
-	TRgb8		mPalette[256];	//	global/default palette
+	TPalette	mPalette;	//	global/default palette
+	//TPalette&	mPalette = mPendingImageBlock.mPalette;
 	bool		mHasPendingImageBlock = false;
 	TPendingImageBlock	mPendingImageBlock;
 	uint8_t		mPendingExtensionBlockType = 0x0;	//	when non zero, we're eating chunks from the block
