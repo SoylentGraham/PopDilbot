@@ -70,97 +70,14 @@ GxEPD_Class display(io /*RST=D4*/ /*BUSY=D2*/); // default selection of D4(=2), 
 //#include <WiFi101.h>
 //#include <WiFiClient.h>
 #include <WiFiNINA.h>
-GxIO_Class io(SPI, 7, 2, 1); // arbitrary selection of D3(=0), D4(=2), selected for default of GxEPD_Class
-GxEPD_Class display(io,1,10); // default selection of D4(=2), D2(=4)
+GxIO_Class io(SPI, 7, 6, 11); // arbitrary selection of D3(=0), D4(=2), selected for default of GxEPD_Class
+GxEPD_Class display(io,11,10); // default selection of D4(=2), D2(=4)
 
 
 #else
 #error define a board!
 #endif
 
-String ExtractAndRenderGif(WiFiClient& Client,std::function<void(const String&)> OnError,std::function<void(const String&)> OnDebug);
-
-
-
-std::function<void()> OnDrawStuffFunc = nullptr;
-
-
-
-void WDT_YEILD()
-{
-	#if defined(BOARD_NODEMCU)
-	ESP.wdtFeed();
-	#endif
-	//yield();
-}
-
-void OnDrawStuffCallback()
-{
-	OnDrawStuffFunc();
-
-}
-
-void DrawStuff(std::function<void()> OnDraw)
-{
-	OnDrawStuffFunc = OnDraw;
-	display.drawPaged( OnDrawStuffCallback );
-}
-
-
-void DrawText(const String& Text)
-{
-	auto PrintFunc = [&]()
-	{
-		const GFXfont* f = &FreeMonoBold9pt7b;
-		display.fillScreen(GxEPD_BLACK);
-		display.setTextColor(GxEPD_WHITE);
-		display.setFont(f);
-		display.setCursor(0, 0);
-		display.println();
-		display.println(Text);
-	};
-	DrawStuff( PrintFunc );
-}
-
-void DebugPrint(const String& Text)
-{
-	Serial.println(Text);
-	/*
-	auto PrintFunc = [&]()
-	{
-		const GFXfont* f = &FreeMonoBold9pt7b;
-		display.fillScreen(GxEPD_BLACK);
-		display.setTextColor(GxEPD_WHITE);
-		display.setFont(f);
-		display.setCursor(0, 0);
-		display.println();
-		display.println(Text);
-	};
-	DrawStuff( PrintFunc );
-	*/
-}
-
-
-void FontTest()
-{
-	  const char* name = "FreeMonoBold9pt7b";
-  const GFXfont* f = &FreeMonoBold9pt7b;
-  display.fillScreen(GxEPD_WHITE);
-  display.setTextColor(GxEPD_BLACK);
-  display.setFont(f);
-  display.setCursor(0, 0);
-  display.println();
-  display.println(name);
-  display.println(" !\"#$%&'()*+,-./");
-  display.println("0123456789:;<=>?");
-  display.println("@ABCDEFGHIJKLMNO");
-  display.println("PQRSTUVWXYZ[\\]^_");
-#if defined(_GxGDEW0154Z04_H_) || defined(_GxGDEW0213Z16_H_) || defined(_GxGDEW029Z10_H_) || defined(_GxGDEW027C44_H_) || defined(_GxGDEW042Z15_H_) || defined(_GxGDEW075Z09_H_)
-  display.setTextColor(GxEPD_RED);
-#endif
-  display.println("`abcdefghijklmno");
-  display.println("pqrstuvwxyz{|}~ ");
-}
 
 //	https://github.com/ZinggJM/GxEPD/issues/54 :|
 #define ROTATION_0		0
@@ -168,679 +85,376 @@ void FontTest()
 #define ROTATION_180	2
 #define ROTATION_270	3
 
+
+class TUrl
+{
+public:
+	String	mHost;
+	String	mPath;
+	int		mPort = 80;
+};
+
+//	should be using SoyProtocols
+class THttpFetch
+{
+public:
+	bool	IsHeaderComplete()	{	return mGotHeaders;	}
+	bool	HasError()			{	return mError.length() > 0;	}
+
+	void	Push(char Char,std::function<void(const String&)>& Debug);
+	
+public:
+	String	mError = String();
+	String	mInitialResponse = String();
+	String	mCurrentHeaderLine = String();
+	bool	mGotHeaders = false;
+	String	mMimeType = String();
+	bool	mChunkedEncoding = false;
+};
+
+
+
+namespace TState
+{
+	enum Type
+	{
+		ConnectToWifi=0,
+		GetGifUrl,
+		ConnectToGifUrl,
+		GetGifHttpHeaders,
+		ParseGif,
+		DisplayGif,
+		DisplayError,
+
+		COUNT
+	};
+}
+
+class TApp
+{
+public:
+	TApp()	{}
+	
+	TState::Type	Update_ConnectWifi(bool FirstCall);
+	TState::Type	Update_GetGifUrl(bool FirstCall);
+	TState::Type	Update_ConnectToGifUrl(bool FirstCall);
+	TState::Type	Update_GetGifHttpHeaders(bool FirstCall);
+	TState::Type	Update_ParseGif(bool FirstCall);
+	
+
+	TState::Type	OnError(const String& Error)
+	{
+		Debug( String("Error: ") + Error );
+		mError = Error;
+		return TState::DisplayError;
+	}
+
+public:
+	String		mError;
+	String		mWifiSsid;
+	String		mWifiPassword;
+
+	WiFiClient	mWebClient;
+	TUrl		mGifUrl;
+	THttpFetch	mGifFetch;
+	
+	std::function<void(const String&)>	Debug;
+};
+
+
+
+TState::Type TApp::Update_ConnectWifi(bool FirstCall)
+{
+	if ( !FirstCall )
+	{
+		Debug("Not first connect wifi attempt, pausing for 1000ms");
+		delay(1000);
+	}
+
+	auto Status = WiFi.begin( mWifiSsid.c_str(), mWifiPassword.c_str() );
+	if ( Status == WL_CONNECTED )
+	{
+		Debug("Wifi connected");
+		return TState::GetGifUrl;
+	}
+
+	Debug( String("Wifi status is ") + IntToString(Status) );
+
+	return TState::ConnectToWifi;
+}
+
+
+TState::Type TApp::Update_GetGifUrl(bool FirstCall)
+{
+	mGifUrl.mHost = "assets.amuniversal.com";
+	mGifUrl.mPath = "/a2bb8780a4c401365a02005056a9545d";
+	return TState::ConnectToGifUrl;
+}
+
+TState::Type TApp::Update_ConnectToGifUrl(bool FirstCall)
+{
+	if ( FirstCall )
+	{
+		//	reset old connection
+		mWebClient.stop();
+	}
+
+	if ( !mWebClient.connect( mGifUrl.mHost.c_str(), mGifUrl.mPort ) )
+		return OnError( String("Failed to connect to ") + mGifUrl.mHost + ":" + IntToString(mGifUrl.mPort) );
+
+	Debug( String("Connected to ") + mGifUrl.mHost + ":" + IntToString(mGifUrl.mPort) );
+	return TState::GetGifHttpHeaders;
+}
+
+TState::Type TApp::Update_GetGifHttpHeaders(bool FirstCall)
+{
+	if ( FirstCall )
+	{
+		mGifFetch = THttpFetch();
+
+		//	send request
+		mWebClient.println(String("GET ") + mGifUrl.mPath + " HTTP/1.1");
+    	mWebClient.println(String("Host: ") + mGifUrl.mHost );
+    	mWebClient.println("Connection: close");
+    	mWebClient.println();
+	}
+	
+	//	read bytes as availible, when they're not, let the loop return
+	if ( !mWebClient.connected() )
+		return OnError("WebClient no longer connected");
+
+	//	read more bytes
+	while ( mWebClient.available() )
+	{
+		char NextChar;
+		auto ReadCount = mWebClient.readBytes(&NextChar,1);
+		if ( ReadCount == 0 )
+			break;
+		mGifFetch.Push( NextChar, Debug );
+		
+		if ( mGifFetch.IsHeaderComplete() )
+		{
+			if ( mGifFetch.mMimeType != "image/gif" )
+				return OnError( String("Mime is not image/gif, is ") + mGifFetch.mMimeType );
+			return TState::ParseGif;
+		}
+
+		if ( mGifFetch.HasError() )
+			return OnError( mGifFetch.mError );
+	}
+	
+	Debug("Waiting for more data...");
+	delay(100);
+	return TState::GetGifHttpHeaders;
+}
+
+
+TState::Type TApp::Update_ParseGif(bool FirstCall)
+{
+	Debug("Parsing gif");
+
+	//	read bytes as availible, when they're not, let the loop return
+	if ( !mWebClient.connected() )
+		return OnError("WebClient no longer connected");
+
+	//	read more bytes
+	while ( mWebClient.available() )
+	{
+		char NextChar;
+		auto ReadCount = mWebClient.readBytes(&NextChar,1);
+		if ( ReadCount == 0 )
+			break;
+		mGifFetch.Push( NextChar, Debug );
+		
+		if ( mGifFetch.IsHeaderComplete() )
+		{
+			if ( mGifFetch.mMimeType != "image/gif" )
+				return OnError( String("Mime is not image/gif, is ") + mGifFetch.mMimeType );
+			return TState::ParseGif;
+		}
+
+		if ( mGifFetch.HasError() )
+			return OnError( mGifFetch.mError );
+	}
+	
+	Debug("Waiting for more data...");
+	delay(100);
+	return TState::GetGifHttpHeaders;
+}
+
+
+
+template<typename STATETYPE>
+class TStateMachine
+{
+public:
+	void		Update(std::function<void(const String&)>& Debug);
+
+	STATETYPE	mCurrentState;
+	bool		mCurrentStateFirstCall = true;
+	std::function<STATETYPE(bool)>	mUpdates[STATETYPE::COUNT];
+};
+
+template<typename STATETYPE>
+void TStateMachine<STATETYPE>::Update(std::function<void(const String&)>& Debug)
+{
+	auto& StateUpdate = mUpdates[mCurrentState];
+	if ( StateUpdate == nullptr )
+	{
+		Debug( String("Null state #") + IntToString(mCurrentState) );
+		delay(1000*10);
+		return;
+	}
+	auto NewState = StateUpdate( mCurrentStateFirstCall );
+	mCurrentStateFirstCall = false;
+	if ( NewState != mCurrentState )
+	{
+		mCurrentState = NewState;
+		mCurrentStateFirstCall = true;
+	}
+}
+
+//	returns false if not ending with \r\n
+bool TrimLineFeed(String& Line)
+{
+	auto Length = Line.length();
+	if ( Length < 2 )
+		return false;
+	if ( Line[Length-1] != '\n' )
+		return false;
+	if ( Line[Length-2] != '\r' )
+		return false;
+	Line.remove( Length-2, 2 );
+	return true;
+}
+	
+void THttpFetch::Push(char Char,std::function<void(const String&)>& Debug)
+{
+	mCurrentHeaderLine += Char;
+
+	//	waiting for EOL's
+	if ( Char != '\n' )
+		return;
+
+	//	process current buffer
+	const char* ContentTypeKey = "Content-Type: ";
+	const char* ChunkedEncodingKey = "Transfer-Encoding: chunked";
+	const char* Response200Key = "HTTP/1.1 200";
+
+	//	waiting for initial response
+	if ( mInitialResponse.length() == 0 )
+	{
+		mInitialResponse = mCurrentHeaderLine;
+		if ( !mInitialResponse.startsWith(Response200Key) )
+		{
+			mError = "Response was not ";
+			mError += Response200Key;
+			mError += ": ";
+			mError += mInitialResponse;
+			return;
+		}
+		mCurrentHeaderLine = String();
+		return;		
+	}
+
+	if ( !TrimLineFeed(mCurrentHeaderLine) )
+	{
+		mError = "Header line didn't end with proper line feed";
+		return;
+	}
+		
+	//	process header line
+	if ( mCurrentHeaderLine.startsWith(ChunkedEncodingKey) )
+	{
+		mChunkedEncoding = true;
+	}
+	else if ( mCurrentHeaderLine.startsWith(ContentTypeKey) )
+	{		
+		mMimeType = mCurrentHeaderLine.substring( strlen(ContentTypeKey) );
+	}
+	else if ( mCurrentHeaderLine.length() == 0 )
+	{
+		mGotHeaders = true;
+	}
+	else
+	{
+		Debug("Skipped header: [" + mCurrentHeaderLine  + "]x" + IntToString(mCurrentHeaderLine.length()));
+	}
+
+	//	done with this header line
+	mCurrentHeaderLine = String();
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+TApp App;
+TStateMachine<TState::Type> AppState;
+
+
 void setup()
 {
-	delay(100);
+	delay(1000);
 	Serial.begin(115200);
 	Serial.println();
-
-	Serial.println("Initialising display");
-	display.init(115200); // enable diagnostic output on Serial
+	
+	Serial.println("Initialising display...");
+	display.init(115200);	// enable diagnostic output on Serial
 	display.setRotation(ROTATION_90);
 
-	DebugPrint("Initialised display.");
 
-	//	disable software watchdog
-	#if defined(BOARD_NODEMCU)
-	ESP.wdtDisable();
-	ESP.wdtEnable(WDTO_8S);
-	#endif
-}
-
-
-void ConnectToWifi(const String& Ssid,const String& Password,std::function<void(const String&)> Debug)
-{
-	Debug( String("Setting up wifi to ") + Ssid + "/" + Password);
-
-#if defined(BOARD_NODEMCU)
-	WiFi.persistent(true);
-	WiFi.mode(WIFI_STA); // switch off AP
-	WiFi.setAutoConnect(true);
-	WiFi.setAutoReconnect(true);
-	WiFi.disconnect();
-	WiFi.begin(Ssid.c_str(), Password.c_str());
-
-	int Attempt=0;
-	do
+	App.mWifiSsid = "ZaegerMeister";
+	App.mWifiPassword = "InTheYear2525";
+	App.Debug = [&](const String& Text)
 	{
-		delay(500);
-		if ( (Attempt % 10) == 0 )
-			Debug( String("Attempt #") + Attempt + "\nStatus:" + WiFi.status());
-		Attempt++;
-	}
-	while ( WiFi.status() != WL_CONNECTED );
+		Serial.println(Text);
+	};
 
-#elif defined(BOARD_MKR1010)
-
-	int Attempt=0;
-	auto Status = WiFi.status();
-	do
-	{
-		Status = WiFi.begin(Ssid.c_str(), Password.c_str());
-
-		delay(1000);
-		if ( (Attempt % 10) == 0 )
-			Debug( String("Attempt #") + Attempt + "\nStatus:" + WiFi.status());
-		Attempt++;
-	}
-	while ( Status != WL_CONNECTED );
-#endif
+	AppState.mUpdates[TState::ConnectToWifi] = [&](bool FirstCall)		{	return App.Update_ConnectWifi(FirstCall);	};
+	AppState.mUpdates[TState::GetGifUrl] = [&](bool FirstCall)			{	return App.Update_GetGifUrl(FirstCall);	};
+	AppState.mUpdates[TState::ConnectToGifUrl] = [&](bool FirstCall)	{	return App.Update_ConnectToGifUrl(FirstCall);	};
+	AppState.mUpdates[TState::GetGifHttpHeaders] = [&](bool FirstCall)	{	return App.Update_GetGifHttpHeaders(FirstCall);	};
+	//AppState.mUpdates[TState::ParseGif] = [&](bool FirstCall)			{	return App.Update_ParseGif(FirstCall);	};
+	//AppState.mUpdates[TState::DisplayGif] = [&](bool FirstCall)			{	return App.Update_DisplayGif(FirstCall);	};
+	//AppState.mUpdates[TState::DisplayError] = [&](bool FirstCall)		{	return App.Update_DisplayError(FirstCall);	};
+	AppState.mCurrentState = TState::ConnectToWifi;
 }
-
 
 void loop()
 {
-	if ( WiFi.status() != WL_CONNECTED )
-	{
-		ConnectToWifi( "ZaegerMeister", "InTheYear2525", DebugPrint );
-		//DrawText("Connected to wifi!");
-	}
-	
-	auto* Host = "assets.amuniversal.com";
-	auto* Path = "/a2bb8780a4c401365a02005056a9545d";
-	//auto* Path = "/985bb260a4c401365a02005056a9545d";
-
-	auto OnError = [&](const String& Error)
-	{
-		DebugPrint( Error );
-		DrawText(Error);	
-	};
-	auto OnConnected = [&](WiFiClient& Client,bool IsContentChunked)
-	{
-		return ExtractAndRenderGif( Client, IsContentChunked, OnError, DebugPrint );
-	};
-	FetchHttp( Host, Path, "image/gif", OnConnected, OnError, DebugPrint );
-	delay(100000);
-}
-/*
-
-void showFontCallback()
-{
-  const char* name = "FreeMonoBold9pt7b";
-  const GFXfont* f = &FreeMonoBold9pt7b;
-  display.fillScreen(GxEPD_WHITE);
-  display.setTextColor(GxEPD_BLACK);
-  display.setFont(f);
-  display.setCursor(0, 0);
-  display.println();
-  display.println(name);
-  display.println(" !\"#$%&'()*+,-./");
-  display.println("0123456789:;<=>?");
-  display.println("@ABCDEFGHIJKLMNO");
-  display.println("PQRSTUVWXYZ[\\]^_");
-#if defined(_GxGDEW0154Z04_H_) || defined(_GxGDEW0213Z16_H_) || defined(_GxGDEW029Z10_H_) || defined(_GxGDEW027C44_H_) || defined(_GxGDEW042Z15_H_) || defined(_GxGDEW075Z09_H_)
-  display.setTextColor(GxEPD_RED);
-#endif
-  display.println("`abcdefghijklmno");
-  display.println("pqrstuvwxyz{|}~ ");
-}
-*/
-
-void FetchHttp(const char* Host,const char* Path,const char* ExpectedMimeType,std::function<String(WiFiClient&,bool)> OnConnected,std::function<void(const String&)> OnError,std::function<void(const String&)> Debug)
-{
-	WiFiClient Client;
-
-  	Debug(String("Fetching ") + Host + Path);
-	
-#define HTTP_PORT	80
-	if ( !Client.connect(Host, HTTP_PORT) )
-	{
-		OnError( String("Failed to connect to ") + Host + HTTP_PORT );
-		return;
-	}
-
-	//	send get request
-	Client.print(String("GET ") + Path + " HTTP/1.1\r\n" +
-               "Host: " + Host + "\r\n" +
-               "User-Agent: grahamatgrahamreevesdotcom\r\n" +
-               "Connection: close\r\n\r\n");
-
-	auto* OkayResponsePrefix = "HTTP/1.1 200";
-
-	//	read response
-	{
-		auto ResponseLine = Client.readStringUntil('\n');
-		if ( !ResponseLine.startsWith(OkayResponsePrefix) )
-		{
-			OnError( String("First header response not ") + OkayResponsePrefix + ": " + ResponseLine );
-			return;
-		}
-	}
-
-	//	read headers
-	String ResponseValue;
-	const char* ContentTypeKey = "Content-Type: ";
-	const char* ChunkedEncodingKey = "Transfer-Encoding: chunked";
-	String ContentTypeValue;
-	bool IsChunked = false;
-
-	while ( true )
-	{
-		if ( !Client.connected() )
-		{
-			OnError("Client lost connection");
-			return;
-		}
-
-		//	read next header
-		auto ResponseLine = Client.readStringUntil('\n');
-		auto DebugLine = ResponseLine;
-		DebugLine.replace("\r","\\r");
-		DebugLine.replace("\n","\\n");
-		Debug( DebugLine );
-
-		ResponseLine.replace('\r',' ');
-		ResponseLine.replace('\n',' ');
-		ResponseLine.trim();
-		if ( ResponseLine.length() == 0 )
-			break;
-
-		if ( ResponseLine.startsWith(ChunkedEncodingKey) )
-			IsChunked = true;
-
-		if ( ResponseLine.startsWith(ContentTypeKey) )
-		{
-			ContentTypeValue = ResponseLine.substring( strlen(ContentTypeKey) );
-			
-			if ( ExpectedMimeType != nullptr )
-			{
-				if ( ContentTypeValue != ExpectedMimeType )
-				{
-					OnError( String("Content type is ") + ContentTypeValue + " not " + ExpectedMimeType );
-					return;
-				}
-			}
-		}			
-	}
-
-	//	process content
-	auto Error = OnConnected( Client, IsChunked );
-	if ( Error.length() > 0 )
-	{
-		OnError( Error );
-	}
+	App.Debug("Loop");
+	AppState.Update( App.Debug );
 }
 
-void DrawImageBlockDebug(const TImageBlock& ImageBlock,std::function<void(const String&)> OnDebug)
-{
-	{
-		String Debug;
-		Debug += "Got image block: [";
-		Debug += IntToString( ImageBlock.mLeft );
-		Debug += ",";
-		Debug += IntToString( ImageBlock.mTop );
-		Debug += ",";
-		Debug += IntToString( ImageBlock.mWidth );
-		Debug += ",";
-		Debug += IntToString( ImageBlock.mHeight );
-		Debug += "]";
-		OnDebug( Debug );
-	}
-	auto w = ImageBlock.mWidth;
-	auto h = ImageBlock.mHeight;
-	auto l = ImageBlock.mLeft;
-	auto r = (l+w)-1;
-	auto t = ImageBlock.mTop;
-	auto b = (t+h)-1;
-	t = std::min<int>( t, display.height()-1 );
-	b = std::min<int>( b, display.height()-1 );
-	l = std::min<int>( l, display.width()-1 );
-	r = std::min<int>( r, display.width()-1 );
-	for ( int y=t;	y<=b;	y++ )
-	{
-		for ( int x=l;	x<=r;	x++ )
-		{
-			display.drawPixel( x, y, GxEPD_BLACK );
-		}
-	}
-}
 
-void DrawImageBlock(const TImageBlock& ImageBlock,std::function<void(const String&)> OnDebug)
-{
-	{
-		String Debug;
-		Debug += "Got image block: [";
-		Debug += IntToString( ImageBlock.mLeft );
-		Debug += ",";
-		Debug += IntToString( ImageBlock.mTop );
-		Debug += ",";
-		Debug += IntToString( ImageBlock.mWidth );
-		Debug += ",";
-		Debug += IntToString( ImageBlock.mHeight );
-		Debug += "]";
-		OnDebug( Debug );
-	}
-
-	auto SubSample = 2;
-	//if ( ImageBlock.mTop % SubSample != 0 )
-	//	return;
-
-	bool UsingRotation = true;
-	auto CurrentX = ImageBlock.mLeft;
-	auto CurrentY = ImageBlock.mTop;
-
-	//	draw colours
-	auto DrawColor = [&](TRgba8 Colour)
-	{
-		/*
-		//yield();
-		auto Luma = std::max( Colour.r, std::max( Colour.g, Colour.b ) );
-		if ( Luma > 200 )
-			display.drawPixel( CurrentX, CurrentY, GxEPD_WHITE );
-		else if ( Luma > 120 )
-			display.drawPixel( CurrentX, CurrentY, GxEPD_RED );
-		else
-			display.drawPixel( CurrentX, CurrentY, GxEPD_BLACK );
-		*/
-		//OnDebug( String("DrawPixel(") + IntToString(CurrentX) + "," + IntToString(CurrentY) );
-		CurrentX++;
-	};
-	//	subsampler
-	auto DrawColor4 = [&](uint8_t a,uint8_t b,uint8_t c,uint8_t d)
-	{
-		auto Coloura = ImageBlock.GetColour(a);
-		auto Colourb = ImageBlock.GetColour(b);
-		auto Colourc = ImageBlock.GetColour(c);
-		auto Colourd = ImageBlock.GetColour(d);
-		//	get an average
-		TRgba8 rgba;
-		rgba.r = (Coloura.r + Colourb.r + Colourc.r + Colourd.r)/4.0f;
-		rgba.g = (Coloura.g + Colourb.g + Colourc.g + Colourd.g)/4.0f;
-		rgba.b = (Coloura.b + Colourb.b + Colourc.b + Colourd.b)/4.0f;
-		rgba.a = 1;
-		DrawColor( rgba );
-	};
-	auto DrawColor3 = [&](uint8_t a,uint8_t b,uint8_t c)
-	{
-		auto Coloura = ImageBlock.GetColour(a);
-		auto Colourb = ImageBlock.GetColour(b);
-		auto Colourc = ImageBlock.GetColour(c);
-		//	get an average
-		TRgba8 rgba;
-		rgba.r = (Coloura.r + Colourb.r + Colourc.r)/3.0f;
-		rgba.g = (Coloura.g + Colourb.g + Colourc.g)/3.0f;
-		rgba.b = (Coloura.b + Colourb.b + Colourc.b)/3.0f;
-		rgba.a = 1;
-		DrawColor( rgba );
-	};
-	auto DrawColor2 = [&](uint8_t a,uint8_t b)
-	{
-		auto Coloura = ImageBlock.GetColour(a);
-		auto Colourb = ImageBlock.GetColour(b);
-		//	get an average
-		TRgba8 rgba;
-		rgba.r = (Coloura.r + Colourb.r)/2.0f;
-		rgba.g = (Coloura.g + Colourb.g)/2.0f;
-		rgba.b = (Coloura.b + Colourb.b)/2.0f;
-		rgba.a = 1;
-		DrawColor( rgba );
-	};
-	#define QUICK_MIN(a,b)		( ((a) < (b)) ? (a) : (b) )
-	//auto Width = std::min<int>( ImageBlock.mWidth/SubSample, display.width() );
-	auto Width = QUICK_MIN( ImageBlock.mWidth/SubSample, display.width() );
-	OnDebug( String("Drawing row width: ") + IntToString(Width) );
-	for ( int x=0;	x<Width;	x+=SubSample )
-	{
-		//	try and avoid WDT timeout (wifi chip)
-		WDT_YEILD();
-		auto xmax = ImageBlock.mWidth-1;
-		/*
-		auto x0 = ImageBlock.mPixels[std::min(x+0,xmax)];
-		auto x1 = ImageBlock.mPixels[std::min(x+1,xmax)];
-		auto x2 = ImageBlock.mPixels[std::min(x+2,xmax)];
-		auto x3 = ImageBlock.mPixels[std::min(x+3,xmax)];
-			
-		if ( SubSample == 1 )
-			DrawColor( ImageBlock.GetColour(x0) );
-		else if ( SubSample == 2 )
-			DrawColor2( x0, x1 );
-		else if ( SubSample == 3 )
-			DrawColor3( x0, x1, x2 );
-		else if ( SubSample == 4 )
-			DrawColor4( x0, x1, x2, x3 );
-			*/
-	}
-	//display.updateWindow( ImageBlock.mLeft, ImageBlock.mTop, ImageBlock.mWidth, ImageBlock.mHeight, UsingRotation );
-}
-
-String ExtractAndRenderGif(WiFiClient& Client,bool IsContentChunked,std::function<void(const String&)> OnError,std::function<void(const String&)> OnDebug)
-{
-	bool FirstChunkHeader = true;
-	int ChunkLength = 0;
-	int BytesRead = 0;
-
-	auto EatChunkHeader = [&]()
-	{
-		if ( !IsContentChunked )
-			return true;
-
-		//	more of last chunk still to go
-		if ( ChunkLength > 0 )
-			return true;
-
-		//	if not the first header, we need to read the tailing \r\n
-		if ( !FirstChunkHeader )
-		{
-			uint8_t Tailrn[2];
-			if ( Client.readBytes( Tailrn, sizeof(Tailrn) ) != 2 )
-			{
-				OnDebug("Failed to read chunk tail \\r\\n");
-				return false;
-			}
-			if ( Tailrn[0] != '\r' || Tailrn[1] != '\n' )
-			{
-				OnDebug("Chunk tail not \\r\\n");
-				return false;
-			}
-		}
-		FirstChunkHeader = false;
-
-		//	read next chunk size
-		//	<lengthinhex>\r\n
-		ChunkLength = 0;
-
-		while ( true )
-		{
-			uint8_t NextByte;
-			if ( Client.readBytes( &NextByte, 1 ) == 0 )
-			{
-				OnDebug("GetChunkLength nextbyte failed to read");
-				return false;
-			}
-			
-			//	eat trailing \r\n
-			if ( NextByte == '\r' )
-			{
-				OnDebug("GetChunkLength found \\r");
-				Client.readBytes( &NextByte, 1 );
-				if ( NextByte != '\n' )
-				{
-					OnDebug("GetChunkLength tail not \n");
-					return false;
-				}
-				OnDebug("GetChunkLength found \\n");
-				break;
-			}
-
-			//	not hex!
-			if ( NextByte >= 'A' && NextByte <= 'F' )
-				NextByte = (NextByte - 'A') + 0xA;
-			else if ( NextByte >= 'a' && NextByte <= 'f' )
-				NextByte = (NextByte - 'a') + 0xA;
-			else if ( NextByte >= '0' && NextByte <= '9' )
-				NextByte -= '0';
-			else
-			{
-				if ( NextByte == ';' )
-				{
-					OnDebug("Http chunked extensions not supported");
-					return false;	
-				}
-				OnDebug( String("GetChunkLength not hex (decimal: ") + IntToString(NextByte) + ")" );
-				return false;
-			}
-
-			//	shift up last hex
-			ChunkLength <<= 4;
-			ChunkLength |= NextByte;
-		}
-		
-		String Debug;
-		Debug += "Read next chunk length: ";
-		Debug += IntToString( ChunkLength );
-		OnDebug(Debug);
-			
-		return true;
-	};
-	
-	auto ReadBytes = [&](uint8_t* Buffer,size_t BufferSize)
-	{
-		for ( size_t i=0;	i<BufferSize;	i++ )
-		{
-			//	read next byte
-			if ( !EatChunkHeader() )
-				return false;
-
-			//	readBytes does a timeout for us :)
-			uint8_t NextByte;
-			auto ReadCount = Client.readBytes( &NextByte, 1 );
-			if ( ReadCount == 0 )
-			{
-				OnDebug("Didn't read next byte");
-				if ( !Client.connected() )
-					OnDebug("Client not connected");
-				if ( !Client.available() )
-					OnDebug("Data not availible");
-				return false;
-			}
-
-			ChunkLength--;
-			
-			//	walking over data if null
-			if ( Buffer != nullptr )
-				Buffer[i] = NextByte;	
-		}
-		BytesRead += BufferSize;
-		return true;
-	};
-
-	bool AnyError = false;
-	auto ErrorWrapper = [&](const String& Error)
-	{
-		OnError(Error);
-		AnyError = true;
-	};	
-	
-	TCallbacks Callbacks;
-	Callbacks.ReadBytes = ReadBytes;
-	Callbacks.OnError = ErrorWrapper;
-	Callbacks.OnDebug = OnDebug;
-
-	display.fillScreen(GxEPD_WHITE);
-	auto DrawBlock = [&](const TImageBlock& ImageBlock)
-	{
-		DrawImageBlockDebug( ImageBlock, OnDebug );
-	};
-	
-	Gif::ParseGif( Callbacks, DrawBlock );
-
-	if ( !AnyError )
-	{
-		OnDebug("Display update");
-		display.update();
-	}
-	return String();
-}
-
-	/*
-  // Parse BMP header
-  if (read16(client) == 0x4D42) // BMP signature
-  {
-    uint32_t fileSize = read32(client);
-    uint32_t creatorBytes = read32(client);
-    uint32_t imageOffset = read32(client); // Start of image data
-    uint32_t headerSize = read32(client);
-    uint32_t width  = read32(client);
-    uint32_t height = read32(client);
-    uint16_t planes = read16(client);
-    uint16_t depth = read16(client); // bits per pixel
-    uint32_t format = read32(client);
-    uint32_t bytes_read = 7 * 4 + 3 * 2; // read so far
-    if ((planes == 1) && ((format == 0) || (format == 3))) // uncompressed is handled, 565 also
-    {
-      Serial.print("File size: "); Serial.println(fileSize);
-      Serial.print("Image Offset: "); Serial.println(imageOffset);
-      Serial.print("Header size: "); Serial.println(headerSize);
-      Serial.print("Bit Depth: "); Serial.println(depth);
-      Serial.print("Image size: ");
-      Serial.print(width);
-      Serial.print('x');
-      Serial.println(height);
-      // BMP rows are padded (if needed) to 4-byte boundary
-      uint32_t rowSize = (width * depth / 8 + 3) & ~3;
-      if (depth < 8) rowSize = ((width * depth + 8 - depth) / 8 + 3) & ~3;
-      if (height < 0)
-      {
-        height = -height;
-        flip = false;
-      }
-      uint16_t w = width;
-      uint16_t h = height;
-      if ((x + w - 1) >= display.width())  w = display.width()  - x;
-      if ((y + h - 1) >= display.height()) h = display.height() - y;
-      valid = true;
-      uint8_t bitmask = 0xFF;
-      uint8_t bitshift = 8 - depth;
-      uint16_t red, green, blue;
-      bool whitish, colored;
-      if (depth == 1) with_color = false;
-      if (depth <= 8)
-      {
-        if (depth < 8) bitmask >>= depth;
-        bytes_read += skip(client, 54 - bytes_read); //palette is always @ 54
-        for (uint16_t pn = 0; pn < (1 << depth); pn++)
-        {
-          blue  = client.read();
-          green = client.read();
-          red   = client.read();
-          client.read();
-          bytes_read += 4;
-          whitish = with_color ? ((red > 0x80) && (green > 0x80) && (blue > 0x80)) : ((red + green + blue) > 3 * 0x80); // whitish
-          colored = (red > 0xF0) || ((green > 0xF0) && (blue > 0xF0)); // reddish or yellowish?
-          if (0 == pn % 8) mono_palette_buffer[pn / 8] = 0;
-          mono_palette_buffer[pn / 8] |= whitish << pn % 8;
-          if (0 == pn % 8) color_palette_buffer[pn / 8] = 0;
-          color_palette_buffer[pn / 8] |= colored << pn % 8;
-          //Serial.print("0x00"); Serial.print(red, HEX); Serial.print(green, HEX); Serial.print(blue, HEX);
-          //Serial.print(" : "); Serial.print(whitish); Serial.print(", "); Serial.println(colored);
-        }
-      }
-      display.fillScreen(GxEPD_WHITE);
-      uint32_t rowPosition = flip ? imageOffset + (height - h) * rowSize : imageOffset;
-      //Serial.print("skip "); Serial.println(rowPosition - bytes_read);
-      bytes_read += skip(client, rowPosition - bytes_read);
-      for (uint16_t row = 0; row < h; row++, rowPosition += rowSize) // for each line
-      {
-        if (!connection_ok || !client.connected()) break;
-        delay(1); // yield() to avoid WDT
-        uint32_t in_remain = rowSize;
-        uint32_t in_idx = 0;
-        uint32_t in_bytes = 0;
-        uint8_t in_byte = 0; // for depth <= 8
-        uint8_t in_bits = 0; // for depth <= 8
-        uint16_t color = GxEPD_WHITE;
-        for (uint16_t col = 0; col < w; col++) // for each pixel
-        {
-          yield();
-          if (!connection_ok || !client.connected()) break;
-          // Time to read more pixel data?
-          if (in_idx >= in_bytes) // ok, exact match for 24bit also (size IS multiple of 3)
-          {
-            uint32_t get = in_remain > sizeof(input_buffer) ? sizeof(input_buffer) : in_remain;
-            //if (get > client.available()) delay(200); // does improve? yes, if >= 200
-            // there seems an issue with long downloads on ESP8266
-            tryToWaitForAvailable(client, get);
-            uint32_t got = client.read(input_buffer, get);
-            while ((got < get) && connection_ok)
-            {
-              //Serial.print("got "); Serial.print(got); Serial.print(" < "); Serial.print(get); Serial.print(" @ "); Serial.println(bytes_read);
-              //if ((get - got) > client.available()) delay(200); // does improve? yes, if >= 200
-              // there seems an issue with long downloads on ESP8266
-              tryToWaitForAvailable(client, get - got);
-              uint32_t gotmore = client.read(input_buffer + got, get - got);
-              got += gotmore;
-              connection_ok = gotmore > 0;
-            }
-            in_bytes = got;
-            in_remain -= got;
-            bytes_read += got;
-          }
-          if (!connection_ok)
-          {
-            Serial.print("Error: got no more after "); Serial.print(bytes_read); Serial.println(" bytes read!");
-            break;
-          }
-          switch (depth)
-          {
-            case 24:
-              blue = input_buffer[in_idx++];
-              green = input_buffer[in_idx++];
-              red = input_buffer[in_idx++];
-              whitish = with_color ? ((red > 0x80) && (green > 0x80) && (blue > 0x80)) : ((red + green + blue) > 3 * 0x80); // whitish
-              colored = (red > 0xF0) || ((green > 0xF0) && (blue > 0xF0)); // reddish or yellowish?
-              break;
-            case 16:
-              {
-                uint8_t lsb = input_buffer[in_idx++];
-                uint8_t msb = input_buffer[in_idx++];
-                if (format == 0) // 555
-                {
-                  blue  = (lsb & 0x1F) << 3;
-                  green = ((msb & 0x03) << 6) | ((lsb & 0xE0) >> 2);
-                  red   = (msb & 0x7C) << 1;
-                }
-                else // 565
-                {
-                  blue  = (lsb & 0x1F) << 3;
-                  green = ((msb & 0x07) << 5) | ((lsb & 0xE0) >> 3);
-                  red   = (msb & 0xF8);
-                }
-                whitish = with_color ? ((red > 0x80) && (green > 0x80) && (blue > 0x80)) : ((red + green + blue) > 3 * 0x80); // whitish
-                colored = (red > 0xF0) || ((green > 0xF0) && (blue > 0xF0)); // reddish or yellowish?
-              }
-              break;
-            case 1:
-            case 4:
-            case 8:
-              {
-                if (0 == in_bits)
-                {
-                  in_byte = input_buffer[in_idx++];
-                  in_bits = 8;
-                }
-                uint16_t pn = (in_byte >> bitshift) & bitmask;
-                whitish = mono_palette_buffer[pn / 8] & (0x1 << pn % 8);
-                colored = color_palette_buffer[pn / 8] & (0x1 << pn % 8);
-                in_byte <<= depth;
-                in_bits -= depth;
-              }
-              break;
-          }
-          if (whitish)
-          {
-            color = GxEPD_WHITE;
-          }
-          else if (colored && with_color)
-          {
-            color = GxEPD_RED;
-          }
-          else
-          {
-            color = GxEPD_BLACK;
-          }
-          uint16_t yrow = y + (flip ? h - row - 1 : row);
-          display.drawPixel(x + col, yrow, color);
-        } // end pixel
-      } // end line
-    }
-    Serial.print("bytes read "); Serial.println(bytes_read);
-  }
-  Serial.print("loaded in "); Serial.print(millis() - startTime); Serial.println(" ms");
-  if (!valid)
-  {
-    Serial.println("bitmap format not handled.");
-  }
-  */
-
-
-  
- #if defined(BOARD_MKR1010)
+#if defined(BOARD_MKR1010)
 namespace std
 {
+	#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wreturn-type"
 	void __throw_bad_function_call()
 	{
+		
 		//throw bad_function_call("invalid function called");
-		DrawText("Bad function called");
+		App.Debug("Bad function called");
 	}
+	#pragma GCC diagnostic pop
 }
 #endif
