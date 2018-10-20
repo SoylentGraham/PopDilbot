@@ -140,6 +140,7 @@ public:
 	TState::Type	Update_ConnectToGifUrl(bool FirstCall);
 	TState::Type	Update_GetGifHttpHeaders(bool FirstCall);
 	TState::Type	Update_ParseGif(bool FirstCall);
+	TState::Type	Update_DisplayGif(bool FirstCall);
 	
 
 	TState::Type	OnError(const String& Error)
@@ -159,6 +160,9 @@ public:
 	THttpFetch	mGifFetch;
 	
 	std::function<void(const String&)>	Debug;
+
+	Gif::THeader	mGifHeader;
+	TStreamBuffer	mStreamBuffer;
 };
 
 
@@ -188,6 +192,10 @@ TState::Type TApp::Update_GetGifUrl(bool FirstCall)
 {
 	mGifUrl.mHost = "assets.amuniversal.com";
 	mGifUrl.mPath = "/a2bb8780a4c401365a02005056a9545d";
+
+	mGifUrl.mHost = "i.giphy.com";
+	mGifUrl.mPath = "/media/UaoxTrl8z1wre/giphy.gif";
+	
 	return TState::ConnectToGifUrl;
 }
 
@@ -251,38 +259,93 @@ TState::Type TApp::Update_GetGifHttpHeaders(bool FirstCall)
 
 TState::Type TApp::Update_ParseGif(bool FirstCall)
 {
-	Debug("Parsing gif");
+	if ( FirstCall )
+	{
+		Debug("Initialising gif setup");
+		mStreamBuffer = TStreamBuffer();
+		mGifHeader = Gif::THeader();
+		display.fillScreen(GxEPD_WHITE);
+	}
 
 	//	read bytes as availible, when they're not, let the loop return
 	if ( !mWebClient.connected() )
 		return OnError("WebClient no longer connected");
 
-	//	read more bytes
-	while ( mWebClient.available() )
+	//	read more bytes into the stream buffer
+	while ( true )
 	{
+		if ( !mWebClient.available() )
+			break;
+		if ( !mStreamBuffer.HasSpace() )
+			break;
+
 		char NextChar;
 		auto ReadCount = mWebClient.readBytes(&NextChar,1);
 		if ( ReadCount == 0 )
-			break;
-		mGifFetch.Push( NextChar, Debug );
-		
-		if ( mGifFetch.IsHeaderComplete() )
 		{
-			if ( mGifFetch.mMimeType != "image/gif" )
-				return OnError( String("Mime is not image/gif, is ") + mGifFetch.mMimeType );
-			return TState::ParseGif;
+			Debug("Unexpectedly read zero bytes from webclient");
+			break;
 		}
 
-		if ( mGifFetch.HasError() )
-			return OnError( mGifFetch.mError );
+		if ( mStreamBuffer.Push( NextChar ) )
+		{
+			return OnError("Unexpectedly failed to push byte to streambuffer");
+		}		
 	}
-	
-	Debug("Waiting for more data...");
-	delay(100);
-	return TState::GetGifHttpHeaders;
+
+	auto DrawImageBlock = [](const TImageBlock& ImageBlock)
+	{
+		auto DrawColor = [&](int x,int y,TRgba8 Colour)
+		{
+			auto Luma = std::max( Colour.r, std::max( Colour.g, Colour.b ) );
+			if ( Luma > 200 )
+				display.drawPixel( x, y, GxEPD_WHITE );
+			else if ( Luma > 120 )
+				display.drawPixel( x, y, GxEPD_RED );
+			else
+				display.drawPixel( x, y, GxEPD_BLACK );
+		};
+
+		for ( int y=0;	y<ImageBlock.mHeight;	y++ )
+		for ( int x=0;	x<ImageBlock.mWidth;	x++ )
+		{
+			auto p0 = ImageBlock.mPixels[x];
+			auto Colour0 = ImageBlock.GetColour(p0);
+			DrawColor( x, y, Colour0 );
+		}
+	};	
+
+	TCallbacks Callbacks( mStreamBuffer );
+	Callbacks.OnError = Debug;
+	Callbacks.OnDebug = Debug;
+
+	auto Result = Gif::ParseGif( mGifHeader, Callbacks, DrawImageBlock );
+	if ( Result == TDecodeResult::Error )
+		return OnError("ParseGif error");
+		
+	if ( Result == TDecodeResult::Finished )
+		return TState::DisplayGif;
+		
+	//	need more data in the buffer
+	if ( Result == TDecodeResult::NeedMoreData )
+		return TState::ParseGif;
+
+	return OnError("ParseGif unexpected result");
 }
 
+TState::Type TApp::Update_DisplayGif(bool FirstCall)
+{
+	if ( FirstCall )
+	{
+		Debug("Refreshing display");
+		display.update();
+		auto SleepAfterDisplaySecs = 30;
+		Debug( String("Now sleeping for ") + IntToString(SleepAfterDisplaySecs) + " secs");
+		delay( 1000 * SleepAfterDisplaySecs );
+	}
 
+	return TState::ConnectToWifi;
+}
 
 template<typename STATETYPE>
 class TStateMachine
@@ -298,6 +361,8 @@ public:
 template<typename STATETYPE>
 void TStateMachine<STATETYPE>::Update(std::function<void(const String&)>& Debug)
 {
+	Debug( String("current state = ") + IntToString(mCurrentState) );
+
 	auto& StateUpdate = mUpdates[mCurrentState];
 	if ( StateUpdate == nullptr )
 	{
@@ -411,11 +476,12 @@ TStateMachine<TState::Type> AppState;
 
 void setup()
 {
-	delay(1000);
+	delay(5000);
 	Serial.begin(115200);
 	Serial.println();
 	
 	Serial.println("Initialising display...");
+	delay(5000);
 	display.init(115200);	// enable diagnostic output on Serial
 	display.setRotation(ROTATION_90);
 

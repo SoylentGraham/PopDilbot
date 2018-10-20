@@ -57,6 +57,7 @@ public:
 	bool	Pop(uint8_t* Data,size_t DataSize);
 	void	Unpop(size_t DataSize);
 	size_t	GetBufferSize();
+	bool	HasSpace();
 	
 public:
 	//	ring buffer

@@ -3,13 +3,20 @@ extern void WDT_YEILD();
 
 
 
-
-bool TStreamBuffer::Push(uint8_t Data)
+bool TStreamBuffer::HasSpace()
 {
 	auto CurrentBufferSize = GetBufferSize();
 	//	gr: something wrong with the algo here I think, capacity should be 100% :)
 	if ( CurrentBufferSize == BUFFERSIZE-1 )
 		return false;
+	return true;
+}
+
+bool TStreamBuffer::Push(uint8_t Data)
+{
+	if ( !HasSpace() )
+		return false;
+
 	mBuffer[mBufferTail] = Data;
 	mBufferTail++;
 	mBufferTail %= BUFFERSIZE;
