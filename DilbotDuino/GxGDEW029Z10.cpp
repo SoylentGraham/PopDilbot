@@ -132,6 +132,64 @@ void GxGDEW029Z10::fillScreen(uint16_t color)
   }
 }
 
+
+void GxGDEW029Z10::DrawRow8(int Row,std::function<bool(int,int)> GetColour,uint8_t ColourCommand)
+{
+	int Row8 = Row / 8;
+	int y = 8 * Row8;
+  	int x = 8 * 0;
+
+	//	enter partial window mode
+	IO.writeCommandTransaction(0x91); 
+
+ 	//int Rows = 8 * 20;
+	int Rows = GxGDEW029Z10_HEIGHT;
+	int Columns = 8;
+	_setPartialRamArea( y, x, y+Columns, x+Rows );
+	_writeCommand(ColourCommand);
+	//for ( int i=0; i < GxGDEW029Z10_BUFFER_SIZE; i++)
+	for ( int i=0; i <Rows*Columns; i++)
+	{
+		//	accumulate black, then write opposite so we have a nicer api
+		uint8_t Column = 0x0;
+		Column |= GetColour(x,y+0) << 0;
+		Column |= GetColour(x,y+1) << 1;
+		Column |= GetColour(x,y+2) << 2;
+		Column |= GetColour(x,y+3) << 3;
+		Column |= GetColour(x,y+4) << 4;
+		Column |= GetColour(x,y+5) << 5;
+		Column |= GetColour(x,y+6) << 6;
+		Column |= GetColour(x,y+7) << 7;
+		_writeData(~Column);
+	}
+	//	end partial window mode
+	IO.writeCommandTransaction(0x92); 
+}
+  
+void GxGDEW029Z10::DrawRow8(int Row,std::function<bool(int,int)> GetBlack,std::function<bool(int,int)> GetRed,bool Finished)
+{
+	_wakeUp();
+#define CMD_BLACK_PIXELS	0x10
+#define CMD_RED_PIXELS		0x13
+#define CMD_REFRESH_DISPLAY	0x12
+	DrawRow8( Row, GetBlack, CMD_BLACK_PIXELS );
+	DrawRow8( Row, GetRed, CMD_RED_PIXELS );
+
+	/*
+	 * 	for ( int y=0;	y<GxGDEW029Z10_WIDTH/8;	y++ )
+	  		DrawRow8( y );
+  	
+	 */
+	if ( Finished )
+	{
+		//	display refresh
+		_writeCommand(CMD_REFRESH_DISPLAY); 
+		_waitWhileBusy("update");
+	}
+}
+
+
+
 void GxGDEW029Z10::update(void)
 {
   if (_current_page != -1) 
@@ -175,8 +233,46 @@ void GxGDEW029Z10::update(void)
 
   	//	draw row
   	{
+  		auto GetBlack = [&](int x,int y)
+  		{
+  			if ( (x/4) == (y/4) )
+  				return true;
+  			//if ( (y %8)== 1 )
+  				//return true;
+  			return false;
+  		};
   		
-  		
+  		auto DrawRow8 = [&](int Row8)
+  		{
+  			int y = 8 * Row8;
+	  		int x = 8 * 0;
+		  	IO.writeCommandTransaction(0x91); 
+		 	//int Rows = 8 * 20;
+	 	 	int Rows = GxGDEW029Z10_HEIGHT;
+		  	int Columns = 8;
+		  	_setPartialRamArea( y, x, y+Columns, x+Rows );
+	  		_writeCommand(0x10);
+	  		//for ( int i=0; i < GxGDEW029Z10_BUFFER_SIZE; i++)
+			for ( int i=0; i <Rows*Columns; i++)
+			{
+				//	accumulate black, then write opposite so we have a nicer api
+				uint8_t Column = 0x0;
+				Column |= GetBlack(x,y+0) << 0;
+				Column |= GetBlack(x,y+1) << 1;
+				Column |= GetBlack(x,y+2) << 2;
+				Column |= GetBlack(x,y+3) << 3;
+				Column |= GetBlack(x,y+4) << 4;
+				Column |= GetBlack(x,y+5) << 5;
+				Column |= GetBlack(x,y+6) << 6;
+				Column |= GetBlack(x,y+7) << 7;
+				_writeData(~Column);
+	 		}
+	  		IO.writeCommandTransaction(0x92); 
+  		};
+
+  		for ( int y=0;	y<GxGDEW029Z10_WIDTH/8;	y++ )
+	  		DrawRow8( y );
+  		/*
   		int y = 8 * 0;
   		int x = 8 * 3;
 	  	IO.writeCommandTransaction(0x91); 
@@ -191,6 +287,7 @@ void GxGDEW029Z10::update(void)
 			_writeData(0x00);
 	 	}
 	  	IO.writeCommandTransaction(0x92); 
+	  	*/
   	}
   }
   

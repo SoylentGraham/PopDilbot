@@ -19,6 +19,9 @@
 #if defined(__AVR)
 #error gr: cut out AVR stuff
 #endif
+#undef min
+#undef max
+#include <functional>
 
 #define GxGDEW029Z10_WIDTH 128
 #define GxGDEW029Z10_HEIGHT 296
@@ -74,6 +77,7 @@ class GxGDEW029Z10 : public GxEPD
     void drawPagedToWindow(void (*drawCallback)(const void*), uint16_t x, uint16_t y, uint16_t w, uint16_t h, const void*);
     void drawPagedToWindow(void (*drawCallback)(const void*, const void*), uint16_t x, uint16_t y, uint16_t w, uint16_t h, const void*, const void*);
     void drawCornerTest(uint8_t em = 0x01);
+	void	DrawRow8(int Row,std::function<bool(int,int)> GetBlack,std::function<bool(int,int)> GetRed,bool Finished);
 
     void Sleep()	{	_sleep();	}
     
@@ -93,7 +97,9 @@ class GxGDEW029Z10 : public GxEPD
     void _sleep();
     void _waitWhileBusy(const char* comment = 0);
     void _rotate(uint16_t& x, uint16_t& y, uint16_t& w, uint16_t& h);
+	void	DrawRow8(int Row,std::function<bool(int,int)> GetColour,uint8_t ColourCommand);
   private:
+
     uint8_t _black_buffer[GxGDEW029Z10_BUFFER_SIZE];
 #if defined(ENABLE_RED)
     uint8_t _red_buffer[GxGDEW029Z10_BUFFER_SIZE];

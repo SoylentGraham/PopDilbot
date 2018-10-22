@@ -86,7 +86,7 @@ GxEPD_Class display(io,1,10); // default selection of D4(=2), D2(=4)
 
 //#define DEBUG_DISPLAY
 #define RESIZE_IMAGE_TO_SCREEN	true
-#define DISPLAY_TEST_IMAGE	false
+#define DISPLAY_TEST_IMAGE	true
 
 #if !defined(DISPLAY_ENABLED)
 #define GxEPD_WHITE	' '
@@ -632,18 +632,34 @@ TState::Type TApp::Update_ParseGif(bool FirstCall)
 
 TState::Type TApp::Update_DisplayTest(bool FirstCall)
 {
-	display.fillScreen(GxEPD_WHITE);
-	for ( int y=0;	y<display.height();	y++ )
-	for ( int x=0;	x<display.width();	x++ )
+	#define WHITE	0
+	#define RED		1
+	#define BLACK	2
+	auto GetColour = [](int x,int y)
 	{
-		auto cx = ((x/4) % 2) == 0;
-		auto cy = ((y/4) % 2) == 0;
-		auto Black = (cx == cy);
-		display.drawPixel( x, y, Black ? GxEPD_BLACK : GxEPD_WHITE );
+		if ( (y%12) < 4 )
+			return BLACK;
+		if ( (y%12) < 8 )
+			return WHITE;
+		return RED;
+	};
+
+	auto GetBlack = [&](int x,int y)
+	{
+		return GetColour(x,y) == BLACK;
+	};
+	auto GetRed = [&](int x,int y)
+	{
+		return GetColour(x,y) == RED;
+	};
+
+	for ( int y=0;	y<display.height();	y+=8 )
+	{
+		auto Last = y == display.height()-8;
+		display.DrawRow8( y, GetBlack, GetRed, Last );
 	}
 	
-	display.update();
-	auto SleepAfterDisplaySecs = 20;
+	auto SleepAfterDisplaySecs = 30;
 	Debug("Now sleeping for X secs");
 	delay( 1000 * SleepAfterDisplaySecs );
 
