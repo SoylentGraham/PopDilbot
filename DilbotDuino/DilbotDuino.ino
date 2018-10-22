@@ -85,7 +85,7 @@ GxEPD_Class display(io,1,10); // default selection of D4(=2), D2(=4)
 #endif
 
 //#define DEBUG_DISPLAY
-#define RESIZE_IMAGE_TO_SCREEN	false
+#define RESIZE_IMAGE_TO_SCREEN	true
 #define DISPLAY_TEST_IMAGE	false
 
 #if !defined(DISPLAY_ENABLED)
@@ -575,14 +575,27 @@ TState::Type TApp::Update_ParseGif(bool FirstCall)
 		for ( int sx=0;	sx<display.width();	sx++ )
 		{
 			//	todo: subsample here
-			int px0 = sx * SubSample;
-
-			if ( px0 > PixelMaxx )
-				break;
-			
-			auto c0 = ImageBlock.mPixels[px0];
-			auto Colour0 = ImageBlock.GetColour(c0);
-			DrawColor( sx, sy, Colour0 );
+			int px0 = (sx * SubSample) + 0;
+			//	break out if we're not oversampling
+			if ( SubSample == 1 )
+				if ( px0 > PixelMaxx )
+					break;
+			int r = 0;
+			int g = 0;
+			int b = 0;
+			for ( int s=0;	s<SubSample;	s++ )
+			{
+				auto px = std::min<int>( px0 + s, PixelMaxx );
+				auto c0 = ImageBlock.mPixels[px];
+				auto Colour0 = ImageBlock.GetColour(c0);
+				r += Colour0.r;
+				g += Colour0.g;
+				b += Colour0.b;
+			}	
+			r /= SubSample;
+			g /= SubSample;
+			b /= SubSample;
+			DrawColor( sx, sy, TRgba8(r,g,b,255) );
 		}
 		//Serial.println();
 	};	
