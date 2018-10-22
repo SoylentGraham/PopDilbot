@@ -2,10 +2,9 @@
 //	commit b59ae551a18b8e2dbeeed1bb62f8197e15554be9
 #include "SoyGif.h"
 
-//#define DISPLAY_ENABLED
+#define DISPLAY_ENABLED
 
 #if defined(DISPLAY_ENABLED)
-#include <GxEPD.h>
 
 // select the display class to use, only one
 //#include <GxGDEP015OC1/GxGDEP015OC1.h>    // 1.54" b/w
@@ -14,7 +13,7 @@
 //#include <GxGDE0213B1/GxGDE0213B1.h>      // 2.13" b/w
 //#include <GxGDEW0213Z16/GxGDEW0213Z16.h>  // 2.13" b/w/r
 //#include <GxGDEH029A1/GxGDEH029A1.h>      // 2.9" b/w
-#include <GxGDEW029Z10/GxGDEW029Z10.h>    // 2.9" b/w/r
+#include "GxGDEW029Z10.h"    // 2.9" b/w/r
 //#include <GxGDEW027C44/GxGDEW027C44.h>    // 2.7" b/w/r
 //#include <GxGDEW027W3/GxGDEW027W3.h>      // 2.7" b/w
 //#include <GxGDEW042T2/GxGDEW042T2.h>      // 4.2" b/w
@@ -23,8 +22,7 @@
 //#include <GxGDEW075T8/GxGDEW075T8.h>      // 7.5" b/w
 //#include <GxGDEW075Z09/GxGDEW075Z09.h>    // 7.5" b/w/r
 
-#include <GxIO/GxIO_SPI/GxIO_SPI.h>
-#include <GxIO/GxIO.h>
+#include "GxIO_SPI.h"
 #endif
 
 // for SPI pin definitions see e.g.:
@@ -33,9 +31,6 @@
 //#define BOARD_NANO
 //#define BOARD_NODEMCU
 #define BOARD_MKR1010
-#if defined(DISPLAY_ENABLED)
-#include <Fonts/FreeMonoBold9pt7b.h>
-#endif
 
 #if defined(BOARD_NANO)
 #if defined(DISPLAY_ENABLED)
@@ -457,7 +452,7 @@ TDecodeResult::Type TApp::EatChunkedHeader(THttpFetch& Fetch)
 
 	//	read new size
 	Fetch.mChunkLength = 0;
-	for ( int i=0;	i<ChunkHeader.length();	i++ )
+	for ( unsigned i=0;	i<ChunkHeader.length();	i++ )
 	{
 		auto NextByte = ChunkHeader[i];
 		//	not hex!
