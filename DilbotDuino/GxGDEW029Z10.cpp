@@ -135,15 +135,65 @@ void GxGDEW029Z10::fillScreen(uint16_t color)
 void GxGDEW029Z10::update(void)
 {
   if (_current_page != -1) 
-  return;
+  	return;
   _using_partial_mode = false;
   _wakeUp();
-  _writeCommand(0x10);
-  for (uint32_t i = 0; i < GxGDEW029Z10_BUFFER_SIZE; i++)
   {
-    _writeData((i < sizeof(_black_buffer)) ? ~_black_buffer[i] : 0xFF);
-   //_writeData(0x00);
+  	/*
+  	//	clear 
+  	IO.writeCommandTransaction(0x91); 
+  	_setPartialRamArea( 0, GxGDEW029Z10_WIDTH-1, 0, GxGDEW029Z10_HEIGHT-1 );
+  	_writeCommand(0x10);
+	for ( int x=0;	x<GxGDEW029Z10_WIDTH*GxGDEW029Z10_HEIGHT;	x++ )		
+	{
+		_writeData(0xff);
+		x+=8;
+	}
+	IO.writeCommandTransaction(0x92); 
+	*/
+	
+	
+	_writeCommand(0x10);
+  	uint32_t i=0;
+  	/*
+  	for ( int y=0;	y<1;	y++ )	
+  	for ( int x=0;	x<GxGDEW029Z10_WIDTH;	x++ )
+  	{
+  		//	11110000
+  		_writeData( 0x0f );
+  		i++;
+  		x+=8;
+  	}
+  	*/
+	//for (uint32_t i = 0; i < GxGDEW029Z10_BUFFER_SIZE; i++)
+	for ( ; i < GxGDEW029Z10_BUFFER_SIZE; i++)
+	{
+		//_writeData((i < sizeof(_black_buffer)) ? ~_black_buffer[i] : 0xFF);
+		_writeData(0xff);
+ 	}
+
+
+  	//	draw row
+  	{
+  		
+  		
+  		int y = 8 * 0;
+  		int x = 8 * 3;
+	  	IO.writeCommandTransaction(0x91); 
+	  	//_setPartialRamArea( 0, y, GxGDEW029Z10_WIDTH-1, y+1 );
+	  	int Rows = 8 * 20;
+	  	int Columns = 8 * 1;
+	  	_setPartialRamArea( y, x, y+Columns, x+Rows );
+	  	_writeCommand(0x10);
+	  	//for ( int i=0; i < GxGDEW029Z10_BUFFER_SIZE; i++)
+		for ( int i=0; i <Rows*Columns; i++)
+		{
+			_writeData(0x00);
+	 	}
+	  	IO.writeCommandTransaction(0x92); 
+  	}
   }
+  
 
 _writeCommand(0x13);
   for (uint32_t i = 0; i < GxGDEW029Z10_BUFFER_SIZE; i++)
@@ -154,7 +204,8 @@ _writeCommand(0x13);
     _writeData(0xFF);
 #endif
   }
-  _writeCommand(0x12); //display refresh
+  
+    _writeCommand(0x12); //display refresh
   _waitWhileBusy("update");
   //_sleep();
 }
@@ -451,7 +502,7 @@ void GxGDEW029Z10::powerDown()
   _using_partial_mode = false; // force _wakeUp()
   _sleep();
 }
-
+*/
 uint16_t GxGDEW029Z10::_setPartialRamArea(uint16_t x, uint16_t y, uint16_t xe, uint16_t ye)
 {
   x &= 0xFFF8; // byte boundary
@@ -469,7 +520,7 @@ uint16_t GxGDEW029Z10::_setPartialRamArea(uint16_t x, uint16_t y, uint16_t xe, u
   //IO.writeDataTransaction(0x00); // don't see any difference
   return (7 + xe - x) / 8; // number of bytes to transfer per line
 }
-*/
+
 void GxGDEW029Z10::_writeCommand(uint8_t command)
 {
   IO.writeCommandTransaction(command);
