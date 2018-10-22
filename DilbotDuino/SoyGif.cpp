@@ -406,8 +406,8 @@ TDecodeResult::Type Lzw::Decoder::decode(uint8_t *buf, int len, uint8_t *bufend,
 				else
 				{
 					Debug("lzw cursize >= lzwMaxBits");
-					DecodedCount = 0;
-					return TDecodeResult::Error;
+					//DecodedCount = 0;
+					//return TDecodeResult::Error;
 				}
 			}
 		}

@@ -58,20 +58,33 @@ void GxGDEW029Z10::drawPixel(int16_t x, int16_t y, uint16_t color)
   }
   else
   {
+  	Serial.println( String("Current page is ") + String(_current_page) );
     y -= _current_page * GxGDEW029Z10_PAGE_HEIGHT;
     if ((y < 0) || (y >= GxGDEW029Z10_PAGE_HEIGHT)) return;
     i = x / 8 + y * GxGDEW029Z10_WIDTH / 8;
   }
 
   _black_buffer[i] = (_black_buffer[i] & (0xFF ^ (1 << (7 - x % 8)))); // white
+  #if defined(ENABLE_RED)
   _red_buffer[i] = (_red_buffer[i] & (0xFF ^ (1 << (7 - x % 8)))); // white
-  if (color == GxEPD_WHITE) return;
-  else if (color == GxEPD_BLACK) _black_buffer[i] = (_black_buffer[i] | (1 << (7 - x % 8)));
-  else if (color == GxEPD_RED) _red_buffer[i] = (_red_buffer[i] | (1 << (7 - x % 8)));
+  #endif
+  
+  if (color == GxEPD_WHITE) 
+  return;
+  else if (color == GxEPD_BLACK) 
+  _black_buffer[i] = (_black_buffer[i] | (1 << (7 - x % 8)));
+  else if (color == GxEPD_RED) 
+  {
+  	#if defined(ENABLE_RED)
+  	_red_buffer[i] = (_red_buffer[i] | (1 << (7 - x % 8)));
+  	#endif
+  }
   else
   {
-    if ((color & 0xF100) > (0xF100 / 2)) _red_buffer[i] = (_red_buffer[i] | (1 << (7 - x % 8)));
-    else if ((((color & 0xF100) >> 11) + ((color & 0x07E0) >> 5) + (color & 0x001F)) < 3 * 255 / 2)
+  	Serial.println("Unknown Color");
+    //if ((color & 0xF100) > (0xF100 / 2)) _red_buffer[i] = (_red_buffer[i] | (1 << (7 - x % 8)));
+    //else 
+    if ((((color & 0xF100) >> 11) + ((color & 0x07E0) >> 5) + (color & 0x001F)) < 3 * 255 / 2)
     {
       _black_buffer[i] = (_black_buffer[i] | (1 << (7 - x % 8)));
     }
@@ -103,36 +116,47 @@ void GxGDEW029Z10::fillScreen(uint16_t color)
 {
   uint8_t black = 0x00;
   uint8_t red = 0x00;
+  
   if (color == GxEPD_WHITE);
   else if (color == GxEPD_BLACK) black = 0xFF;
   else if (color == GxEPD_RED) red = 0xFF;
-  else if ((color & 0xF100) > (0xF100 / 2))  red = 0xFF;
+  /*else if ((color & 0xF100) > (0xF100 / 2))  red = 0xFF;
   else if ((((color & 0xF100) >> 11) + ((color & 0x07E0) >> 5) + (color & 0x001F)) < 3 * 255 / 2) black = 0xFF;
+  */
   for (uint16_t x = 0; x < sizeof(_black_buffer); x++)
   {
     _black_buffer[x] = black;
+    #if defined(ENABLE_RED)
     _red_buffer[x] = red;
+    #endif
   }
 }
 
 void GxGDEW029Z10::update(void)
 {
-  if (_current_page != -1) return;
+  if (_current_page != -1) 
+  return;
   _using_partial_mode = false;
   _wakeUp();
   _writeCommand(0x10);
   for (uint32_t i = 0; i < GxGDEW029Z10_BUFFER_SIZE; i++)
   {
     _writeData((i < sizeof(_black_buffer)) ? ~_black_buffer[i] : 0xFF);
+   //_writeData(0x00);
   }
-  _writeCommand(0x13);
+
+_writeCommand(0x13);
   for (uint32_t i = 0; i < GxGDEW029Z10_BUFFER_SIZE; i++)
   {
-    _writeData((i < sizeof(_red_buffer)) ? ~_red_buffer[i] : 0xFF);
+#if defined(ENABLE_RED)
+  _writeData((i < sizeof(_red_buffer)) ? ~_red_buffer[i] : 0xFF);
+#else
+    _writeData(0xFF);
+#endif
   }
   _writeCommand(0x12); //display refresh
   _waitWhileBusy("update");
-  _sleep();
+  //_sleep();
 }
 
 /*
@@ -240,7 +264,7 @@ void GxGDEW029Z10::drawBitmap(const uint8_t* bitmap, uint32_t size, int16_t mode
     _sleep();
   }
 }
-*/
+
 void GxGDEW029Z10::eraseDisplay(bool using_partial_update)
 {
   if (_current_page != -1) return;
@@ -329,6 +353,7 @@ void GxGDEW029Z10::updateWindow(uint16_t x, uint16_t y, uint16_t w, uint16_t h, 
       IO.writeDataTransaction(~data); // white is 0xFF on device
     }
   }
+  #if defined(ENABLE_RED)
   IO.writeCommandTransaction(0x13);
   for (int16_t y1 = y; y1 <= ye; y1++)
   {
@@ -339,6 +364,7 @@ void GxGDEW029Z10::updateWindow(uint16_t x, uint16_t y, uint16_t w, uint16_t h, 
       IO.writeDataTransaction(~data); // white is 0xFF on device
     }
   }
+  #endif
   IO.writeCommandTransaction(0x12);      //display refresh
   _waitWhileBusy("updateWindow");
   IO.writeCommandTransaction(0x92); // partial out
@@ -405,7 +431,8 @@ void GxGDEW029Z10::_writeToWindow(uint16_t xs, uint16_t ys, uint16_t xd, uint16_
       IO.writeDataTransaction(~data); // white is 0xFF on device
     }
   }
-  IO.writeCommandTransaction(0x13);
+ #if defined(ENABLE_RED)
+ IO.writeCommandTransaction(0x13);
   for (int16_t y1 = ys; y1 <= yse; y1++)
   {
     for (int16_t x1 = xss_d8; x1 < xse_d8; x1++)
@@ -415,6 +442,7 @@ void GxGDEW029Z10::_writeToWindow(uint16_t xs, uint16_t ys, uint16_t xd, uint16_
       IO.writeDataTransaction(~data); // white is 0xFF on device
     }
   }
+  #endif
   IO.writeCommandTransaction(0x92); // partial out
 }
 
@@ -441,7 +469,7 @@ uint16_t GxGDEW029Z10::_setPartialRamArea(uint16_t x, uint16_t y, uint16_t xe, u
   //IO.writeDataTransaction(0x00); // don't see any difference
   return (7 + xe - x) / 8; // number of bytes to transfer per line
 }
-
+*/
 void GxGDEW029Z10::_writeCommand(uint8_t command)
 {
   IO.writeCommandTransaction(command);
@@ -517,7 +545,7 @@ void GxGDEW029Z10::_sleep(void)
     _writeData (0xa5);
   }
 }
-
+/*
 void GxGDEW029Z10::drawPaged(void (*drawCallback)(void))
 {
   if (_current_page != -1) return;
@@ -538,7 +566,8 @@ void GxGDEW029Z10::drawPaged(void (*drawCallback)(void))
       }
     }
   }
-  _writeCommand(0x13);
+ #if defined(ENABLE_RED)
+ _writeCommand(0x13);
   for (_current_page = 0; _current_page < GxGDEW029Z10_PAGES; _current_page++)
   {
     fillScreen(GxEPD_WHITE);
@@ -553,6 +582,7 @@ void GxGDEW029Z10::drawPaged(void (*drawCallback)(void))
       }
     }
   }
+  #endif
   _current_page = -1;
   _writeCommand(0x12); //display refresh
   _waitWhileBusy("drawPaged");
@@ -579,6 +609,8 @@ void GxGDEW029Z10::drawPaged(void (*drawCallback)(uint32_t), uint32_t p)
       }
     }
   }
+
+  #if defined(ENABLE_RED)
   _writeCommand(0x13);
   for (_current_page = 0; _current_page < GxGDEW029Z10_PAGES; _current_page++)
   {
@@ -594,6 +626,8 @@ void GxGDEW029Z10::drawPaged(void (*drawCallback)(uint32_t), uint32_t p)
       }
     }
   }
+  #endif
+  
   _current_page = -1;
   _writeCommand(0x12); //display refresh
   _waitWhileBusy("drawPaged");
@@ -620,6 +654,8 @@ void GxGDEW029Z10::drawPaged(void (*drawCallback)(const void*), const void* p)
       }
     }
   }
+
+  #if defined(ENABLE_RED)
   _writeCommand(0x13);
   for (_current_page = 0; _current_page < GxGDEW029Z10_PAGES; _current_page++)
   {
@@ -635,6 +671,8 @@ void GxGDEW029Z10::drawPaged(void (*drawCallback)(const void*), const void* p)
       }
     }
   }
+  #endif
+  
   _current_page = -1;
   _writeCommand(0x12); //display refresh
   _waitWhileBusy("drawPaged");
@@ -661,6 +699,8 @@ void GxGDEW029Z10::drawPaged(void (*drawCallback)(const void*, const void*), con
       }
     }
   }
+
+  #if defined(ENABLE_RED)
   _writeCommand(0x13);
   for (_current_page = 0; _current_page < GxGDEW029Z10_PAGES; _current_page++)
   {
@@ -676,12 +716,14 @@ void GxGDEW029Z10::drawPaged(void (*drawCallback)(const void*, const void*), con
       }
     }
   }
+  #endif
+  
   _current_page = -1;
   _writeCommand(0x12); //display refresh
   _waitWhileBusy("drawPaged");
   _sleep();
 }
-
+*/
 void GxGDEW029Z10::_rotate(uint16_t& x, uint16_t& y, uint16_t& w, uint16_t& h)
 {
   switch (getRotation())
@@ -702,7 +744,7 @@ void GxGDEW029Z10::_rotate(uint16_t& x, uint16_t& y, uint16_t& w, uint16_t& h)
       break;
   }
 }
-
+/*
 void GxGDEW029Z10::drawPagedToWindow(void (*drawCallback)(void), uint16_t x, uint16_t y, uint16_t w, uint16_t h)
 {
   if (_current_page != -1) return;
@@ -842,3 +884,4 @@ void GxGDEW029Z10::drawCornerTest(uint8_t em)
   _waitWhileBusy("drawCornerTest");
   _sleep();
 }
+*/

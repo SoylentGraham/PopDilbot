@@ -16,8 +16,14 @@
 
 #include "GxEPD.h"
 
+#if defined(__AVR)
+#error gr: cut out AVR stuff
+#endif
+
 #define GxGDEW029Z10_WIDTH 128
 #define GxGDEW029Z10_HEIGHT 296
+
+//#define ENABLE_RED
 
 #define GxGDEW029Z10_BUFFER_SIZE (uint32_t(GxGDEW029Z10_WIDTH) * uint32_t(GxGDEW029Z10_HEIGHT) / 8)
 
@@ -68,6 +74,9 @@ class GxGDEW029Z10 : public GxEPD
     void drawPagedToWindow(void (*drawCallback)(const void*), uint16_t x, uint16_t y, uint16_t w, uint16_t h, const void*);
     void drawPagedToWindow(void (*drawCallback)(const void*, const void*), uint16_t x, uint16_t y, uint16_t w, uint16_t h, const void*, const void*);
     void drawCornerTest(uint8_t em = 0x01);
+
+    void Sleep()	{	_sleep();	}
+    
   private:
     template <typename T> static inline void
     swap(T& a, T& b)
@@ -85,11 +94,8 @@ class GxGDEW029Z10 : public GxEPD
     void _waitWhileBusy(const char* comment = 0);
     void _rotate(uint16_t& x, uint16_t& y, uint16_t& w, uint16_t& h);
   private:
-#if defined(__AVR)
-    uint8_t _black_buffer[GxGDEW029Z10_PAGE_SIZE];
-    uint8_t _red_buffer[GxGDEW029Z10_PAGE_SIZE];
-#else
     uint8_t _black_buffer[GxGDEW029Z10_BUFFER_SIZE];
+#if defined(ENABLE_RED)
     uint8_t _red_buffer[GxGDEW029Z10_BUFFER_SIZE];
 #endif
     GxIO& IO;
@@ -98,14 +104,6 @@ class GxGDEW029Z10 : public GxEPD
     bool _diag_enabled;
     int8_t _rst;
     int8_t _busy;
-#if defined(ESP8266) || defined(ESP32)
-  public:
-    // the compiler of these packages has a problem with signature matching to base classes
-    void drawBitmap(int16_t x, int16_t y, const uint8_t bitmap[], int16_t w, int16_t h, uint16_t color)
-    {
-      Adafruit_GFX::drawBitmap(x, y, bitmap, w, h, color);
-    };
-#endif
 };
 
 #ifndef GxEPD_Class

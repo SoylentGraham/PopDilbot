@@ -84,6 +84,9 @@ GxEPD_Class display(io,1,10); // default selection of D4(=2), D2(=4)
 #error define a board!
 #endif
 
+//#define DEBUG_DISPLAY
+#define RESIZE_IMAGE_TO_SCREEN	false
+#define DISPLAY_TEST_IMAGE	false
 
 #if !defined(DISPLAY_ENABLED)
 #define GxEPD_WHITE	' '
@@ -231,7 +234,7 @@ namespace TState
 		ParseGif,
 		DisplayGif,
 		DisplayError,
-
+		DisplayTest,
 		COUNT
 	};
 }
@@ -250,6 +253,8 @@ public:
 	TState::Type	Update_GetGifHttpHeaders(bool FirstCall);
 	TState::Type	Update_ParseGif(bool FirstCall);
 	TState::Type	Update_DisplayGif(bool FirstCall);
+	TState::Type	Update_DisplayError(bool FirstCall);
+	TState::Type	Update_DisplayTest(bool FirstCall);
 	
 	template<typename STRING>
 	TState::Type	OnError(const STRING& Error)
@@ -539,6 +544,7 @@ TState::Type TApp::Update_ParseGif(bool FirstCall)
 	auto DrawImageBlock = [](const TImageBlock& ImageBlock)
 	{
 		auto SubSample = 1;
+		if ( RESIZE_IMAGE_TO_SCREEN )
 		{
 			//	this is assuming ImageBlock always starts at 0,0
 			if ( ImageBlock.mWidth > display.width() )
@@ -552,9 +558,6 @@ TState::Type TApp::Update_ParseGif(bool FirstCall)
 			
 		auto DrawColor = [&](int x,int y,TRgba8 Colour)
 		{
-			if ( x >= display.width() )		return;
-			if ( y >= display.height() )	return;
-			
 			auto Luma = std::max( Colour.r, std::max( Colour.g, Colour.b ) );
 			if ( Luma > 200 )
 				display.drawPixel( x, y, GxEPD_WHITE );
@@ -565,12 +568,18 @@ TState::Type TApp::Update_ParseGif(bool FirstCall)
 		};
 
 		int sy=ImageBlock.mTop/SubSample;
+		//auto DisplayMaxx = display.width()-1;
+		auto PixelMaxx = ImageBlock.mWidth-1;
 		//	todo: block position
 		//for ( int sx=ImageBlock.mleft/SubSample;	sx<display.width();	sx++ )
 		for ( int sx=0;	sx<display.width();	sx++ )
 		{
 			//	todo: subsample here
-			int px0 = std::min<int>( sx * SubSample, display.width()-1 );
+			int px0 = sx * SubSample;
+
+			if ( px0 > PixelMaxx )
+				break;
+			
 			auto c0 = ImageBlock.mPixels[px0];
 			auto Colour0 = ImageBlock.GetColour(c0);
 			DrawColor( sx, sy, Colour0 );
@@ -607,6 +616,33 @@ TState::Type TApp::Update_ParseGif(bool FirstCall)
 	return OnError("ParseGif unexpected result");
 }
 
+
+TState::Type TApp::Update_DisplayTest(bool FirstCall)
+{
+	display.fillScreen(GxEPD_WHITE);
+	for ( int y=0;	y<display.height();	y++ )
+	for ( int x=0;	x<display.width();	x++ )
+	{
+		auto cx = ((x/4) % 2) == 0;
+		auto cy = ((y/4) % 2) == 0;
+		auto Black = (cx == cy);
+		display.drawPixel( x, y, Black ? GxEPD_BLACK : GxEPD_WHITE );
+	}
+	
+	display.update();
+	auto SleepAfterDisplaySecs = 20;
+	Debug("Now sleeping for X secs");
+	delay( 1000 * SleepAfterDisplaySecs );
+
+	return TState::ConnectToWifi;
+}
+
+TState::Type TApp::Update_DisplayError(bool FirstCall)
+{
+	Debug("Error, but displaying anyway");
+	return Update_DisplayGif(FirstCall);
+}
+
 TState::Type TApp::Update_DisplayGif(bool FirstCall)
 {
 	if ( FirstCall )
@@ -615,10 +651,11 @@ TState::Type TApp::Update_DisplayGif(bool FirstCall)
 		display.update();
 		auto SleepAfterDisplaySecs = 30;
 		Debug("Now sleeping for X secs");
+		display.Sleep();
 		delay( 1000 * SleepAfterDisplaySecs );
 	}
 
-	return TState::ConnectToWifi;
+	return TState::DisplayTest;
 }
 
 
@@ -761,6 +798,15 @@ void setup()
 	delay(1000);
 	Serial.begin(SERIAL_BAUD);
 	Serial.println();
+
+	#if defined(DEBUG_DISPLAY)
+	for (int i=0;	i<5;	i++ )
+	{
+		Serial.println( String("sizeof(display) == ") + IntToString(sizeof(display)) );
+		Serial.println( String("GxGDEW029Z10_BUFFER_SIZE == ") + IntToString(GxGDEW029Z10_BUFFER_SIZE) );
+		delay(1000);
+	}
+	#endif
 	
 	Serial.println("Initialising display...");
 	display.init(SERIAL_BAUD);	// enable diagnostic output on Serial
@@ -780,8 +826,12 @@ void setup()
 	AppState.mUpdates[TState::GetGifHttpHeaders] = [&](bool FirstCall)	{	return App.Update_GetGifHttpHeaders(FirstCall);	};
 	AppState.mUpdates[TState::ParseGif] = [&](bool FirstCall)			{	return App.Update_ParseGif(FirstCall);	};
 	AppState.mUpdates[TState::DisplayGif] = [&](bool FirstCall)			{	return App.Update_DisplayGif(FirstCall);	};
-	//AppState.mUpdates[TState::DisplayError] = [&](bool FirstCall)		{	return App.Update_DisplayError(FirstCall);	};
+	AppState.mUpdates[TState::DisplayError] = [&](bool FirstCall)		{	return App.Update_DisplayError(FirstCall);	};
+	AppState.mUpdates[TState::DisplayTest] = [&](bool FirstCall)		{	return App.Update_DisplayTest(FirstCall);	};
 	AppState.mCurrentState = TState::ConnectToWifi;
+
+	if ( DISPLAY_TEST_IMAGE )
+		AppState.mCurrentState = TState::DisplayTest;
 }
 
 void loop()
