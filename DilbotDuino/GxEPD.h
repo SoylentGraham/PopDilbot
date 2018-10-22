@@ -50,13 +50,7 @@ class GxEPD
     	mHeight	( h )
     	{
        	}
-    virtual void drawPixel(int16_t x, int16_t y, uint16_t color) = 0;
     virtual void init(uint32_t serial_diag_bitrate = 0) = 0; // = 0 : disabled
-    virtual void fillScreen(uint16_t color) = 0; // to buffer
-    virtual void update(void) = 0;
-    //virtual void eraseDisplay(bool using_partial_update = false) {};
-    // partial update of rectangle from buffer to screen, does not power off
-   // virtual void updateWindow(uint16_t x, uint16_t y, uint16_t w, uint16_t h, bool using_rotation = true) {};
     static inline uint16_t gx_uint16_min(uint16_t a, uint16_t b) {return (a < b ? a : b);};
     static inline uint16_t gx_uint16_max(uint16_t a, uint16_t b) {return (a > b ? a : b);};
 

@@ -85,7 +85,7 @@ GxEPD_Class display(io,1,10); // default selection of D4(=2), D2(=4)
 #endif
 
 //#define DEBUG_DISPLAY
-#define RESIZE_IMAGE_TO_SCREEN	true
+#define RESIZE_IMAGE_TO_SCREEN	false
 #define DISPLAY_TEST_IMAGE	true
 
 #if !defined(DISPLAY_ENABLED)
@@ -525,6 +525,107 @@ TDecodeResult::Type TApp::ReadMoreHttpContentBytes(THttpFetch& Fetch)
 	return TDecodeResult::Finished;
 }
 
+
+template<size_t BITCOUNT>
+class TBitBuffer
+{
+public:
+	bool	Get(int Bit)	
+	{
+		auto ByteIndex = Bit / 8;
+		if ( ByteIndex >= BITCOUNT/8 )
+			return false;
+		auto Byte = mBuffer[ByteIndex];
+		//Serial.println( String(Byte) + String(" & 1<<") + String(Bit) );
+		Bit %= 8;
+		Byte &= (1<<Bit);
+		return Byte != 0;
+	}
+
+	//	returns false if out of bounds
+	bool	Set(int Bit,bool Set)	
+	{
+		auto ByteIndex = Bit / 8;
+		if ( ByteIndex >= BITCOUNT/8 )
+			return false;
+		auto Byte = mBuffer[ByteIndex];
+		Bit %= 8;
+		Byte &= (1<<Bit);
+		Byte |= (Set<<Bit);
+		mBuffer[ByteIndex] = Byte;
+		return true;
+	}
+
+	void	Clear(uint8_t Value=0)
+	{
+		for ( int i=0;	i<BITCOUNT/8;	i++ )
+			mBuffer[i] = Value;
+	}
+	
+public:
+	uint8_t	mBuffer[BITCOUNT/8];	
+};
+
+
+template<size_t WIDTH,size_t HEIGHT>
+class TBitGrid : public TBitBuffer<WIDTH*HEIGHT>
+{
+public:
+	bool	Get(int x,int y)
+	{
+		int i = x + (y*WIDTH);
+		return TBitBuffer<WIDTH*HEIGHT>::Get(i);
+	}
+	bool	Set(int x,int y,bool Set)
+	{
+		int i = x + (y*WIDTH);
+		return TBitBuffer<WIDTH*HEIGHT>::Set(i,Set);
+	}
+};
+
+TBitGrid<GxGDEW029Z10_HEIGHT,8> BlackRowBuffer;
+TBitGrid<GxGDEW029Z10_HEIGHT,8> RedRowBuffer;
+
+bool GetBlack(int x,int y)
+{
+	y %= 8;
+	//Serial.println( String(x) + String(",") + String(y) );
+	return BlackRowBuffer.Get( x, y );
+}
+
+bool GetRed(int x,int y)
+{
+	y %= 8;
+	return RedRowBuffer.Get( x, y );
+}
+
+auto DrawColor = [&](int x,int y,TRgba8 Colour)
+{
+	//Serial.print( String(x) + String(",") + String(y) + String("  ") );
+	
+	y %= 8;
+	auto Luma = std::max( Colour.r, std::max( Colour.g, Colour.b ) );
+	if ( Luma > 120 )
+	{
+		//display.drawPixel( x, y, GxEPD_WHITE );
+		BlackRowBuffer.Set( x, y, false );
+		RedRowBuffer.Set( x, y, false );
+	}
+	/*
+	else if ( Luma > 120 )
+	{
+		//display.drawPixel( x, y, GxEPD_RED );
+		BlackRowBuffer.Set( x, y, false );
+		RedRowBuffer.Set( x, y, true );
+	}*/
+	else
+	{
+		//display.drawPixel( x, y, GxEPD_BLACK );
+		BlackRowBuffer.Set( x, y, true );
+		RedRowBuffer.Set( x, y, false );
+	}
+};
+
 TState::Type TApp::Update_ParseGif(bool FirstCall)
 {
 	if ( FirstCall )
@@ -532,7 +633,9 @@ TState::Type TApp::Update_ParseGif(bool FirstCall)
 		Debug("Initialising gif setup");
 		mStreamBuffer = TStreamBuffer();
 		mGifHeader.Reset();
-		display.fillScreen(GxEPD_WHITE);
+
+		BlackRowBuffer.Clear(0);
+		RedRowBuffer.Clear(0);
 	}
 
 	//	read more bytes into the stream buffer
@@ -541,7 +644,7 @@ TState::Type TApp::Update_ParseGif(bool FirstCall)
 		return OnError("Error reading more http content");
 
 	
-	auto DrawImageBlock = [](const TImageBlock& ImageBlock)
+	auto DrawImageBlock = [&](const TImageBlock& ImageBlock)
 	{
 		auto SubSample = 1;
 		if ( RESIZE_IMAGE_TO_SCREEN )
@@ -553,19 +656,12 @@ TState::Type TApp::Update_ParseGif(bool FirstCall)
 			//String DebugString = "Set subsample to " + IntToString(SubSample);
 			//Debug(DebugString.c_str());
 		}
+		
+		
 		if ( (ImageBlock.mTop % SubSample) != 0 )
 			return;
 			
-		auto DrawColor = [&](int x,int y,TRgba8 Colour)
-		{
-			auto Luma = std::max( Colour.r, std::max( Colour.g, Colour.b ) );
-			if ( Luma > 200 )
-				display.drawPixel( x, y, GxEPD_WHITE );
-			else if ( Luma > 120 )
-				display.drawPixel( x, y, GxEPD_RED );
-			else
-				display.drawPixel( x, y, GxEPD_BLACK );
-		};
+		
 
 		int sy=ImageBlock.mTop/SubSample;
 		//auto DisplayMaxx = display.width()-1;
@@ -597,7 +693,16 @@ TState::Type TApp::Update_ParseGif(bool FirstCall)
 			b /= SubSample;
 			DrawColor( sx, sy, TRgba8(r,g,b,255) );
 		}
-		//Serial.println();
+		//	last of 8, update display
+		if ( (sy % 8) == 7 )
+		{
+			//auto Last = ( sy == display.height()-1 );
+			bool Last = false;
+			Debug( (String("Drawing row ") + String(sy)).c_str() );
+			display.DrawRow8( sy, GetBlack, GetRed, Last );
+		}
+		
+		Serial.println();
 	};	
 
 	TCallbacks Callbacks( mStreamBuffer );
@@ -609,8 +714,11 @@ TState::Type TApp::Update_ParseGif(bool FirstCall)
 		return OnError("ParseGif error");
 		
 	if ( Result == TDecodeResult::Finished )
+	{
+		display.FinishRowDrawing();
 		return TState::DisplayGif;
-		
+	}
+			
 	//	need more data in the buffer
 	//	gr: or need to re-process, in lzw case, we don't even need more bytes sometimes
 	if ( Result == TDecodeResult::NeedMoreData )
@@ -632,11 +740,27 @@ TState::Type TApp::Update_ParseGif(bool FirstCall)
 
 TState::Type TApp::Update_DisplayTest(bool FirstCall)
 {
+	BlackRowBuffer.Clear(0);
+	RedRowBuffer.Clear(0);
+
+	BlackRowBuffer.Set( 1,1, true );
+	BlackRowBuffer.Set( 2,2, true );
+	BlackRowBuffer.Set( 3,3, true );
+	RedRowBuffer.Set( 6,2, true );
+	RedRowBuffer.Set( 6,3, true );
+	RedRowBuffer.Set( 6,4, true );
+	RedRowBuffer.Set( 6,5, true );
+	RedRowBuffer.Set( 6,6, true );
+
+	/*
 	#define WHITE	0
 	#define RED		1
 	#define BLACK	2
 	auto GetColour = [](int x,int y)
 	{
+		if ( x < 20 && y < 33 && y > 3 )
+			return BLACK;
+		return WHITE;
 		if ( (y%12) < 4 )
 			return BLACK;
 		if ( (y%12) < 8 )
@@ -652,7 +776,7 @@ TState::Type TApp::Update_DisplayTest(bool FirstCall)
 	{
 		return GetColour(x,y) == RED;
 	};
-
+*/
 	for ( int y=0;	y<display.height();	y+=8 )
 	{
 		auto Last = y == display.height()-8;
@@ -676,8 +800,10 @@ TState::Type TApp::Update_DisplayGif(bool FirstCall)
 {
 	if ( FirstCall )
 	{
+		/*
 		Debug("Refreshing display");
 		display.update();
+		*/
 		auto SleepAfterDisplaySecs = 30;
 		Debug("Now sleeping for X secs");
 		display.Sleep();

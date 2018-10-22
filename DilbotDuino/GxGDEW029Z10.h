@@ -46,39 +46,13 @@ class GxGDEW029Z10 : public GxEPD
 #else
     GxGDEW029Z10(GxIO& io, int8_t rst = 9, int8_t busy = 7);
 #endif
-    void drawPixel(int16_t x, int16_t y, uint16_t color);
     void init(uint32_t serial_diag_bitrate = 0); // = 0 : disabled
-    void fillScreen(uint16_t color); // to buffer
-    void update(void);
-    // to buffer, may be cropped, drawPixel() used, update needed
-    void  drawBitmap(const uint8_t *bitmap, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color, int16_t mode = bm_normal);
-    // to full screen, filled with white if size is less, no update needed, black  /white / red, for example bitmaps
-    void drawExamplePicture(const uint8_t* black_bitmap, const uint8_t* red_bitmap, uint32_t black_size, uint32_t red_size);
-    // to full screen, filled with white if size is less, no update needed, black  /white / red, general version
-    void drawPicture(const uint8_t* black_bitmap, const uint8_t* red_bitmap, uint32_t black_size, uint32_t red_size, int16_t mode = bm_normal);
-    // to full screen, filled with white if size is less, no update needed
-    void drawBitmap(const uint8_t *bitmap, uint32_t size, int16_t mode = bm_normal); // only bm_normal, bm_invert, bm_partial_update modes implemented
-    void eraseDisplay(bool using_partial_update = false);
-    // partial update of rectangle from buffer to screen, does not power off
-    void updateWindow(uint16_t x, uint16_t y, uint16_t w, uint16_t h, bool using_rotation = true);
-    // partial update of rectangle at (xs,ys) from buffer to screen at (xd,yd), does not power off
-    void updateToWindow(uint16_t xs, uint16_t ys, uint16_t xd, uint16_t yd, uint16_t w, uint16_t h, bool using_rotation = true);
-    // terminate cleanly updateWindow or updateToWindow before removing power or long delays
     void powerDown();
     // paged drawing, for limited RAM, drawCallback() is called GxGDEW029Z10_PAGES times
     // each call of drawCallback() should draw the same
-    void drawPaged(void (*drawCallback)(void));
-    void drawPaged(void (*drawCallback)(uint32_t), uint32_t);
-    void drawPaged(void (*drawCallback)(const void*), const void*);
-    void drawPaged(void (*drawCallback)(const void*, const void*), const void*, const void*);
-    // paged drawing to screen rectangle at (x,y) using partial update
-    void drawPagedToWindow(void (*drawCallback)(void), uint16_t x, uint16_t y, uint16_t w, uint16_t h);
-    void drawPagedToWindow(void (*drawCallback)(uint32_t), uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint32_t);
-    void drawPagedToWindow(void (*drawCallback)(const void*), uint16_t x, uint16_t y, uint16_t w, uint16_t h, const void*);
-    void drawPagedToWindow(void (*drawCallback)(const void*, const void*), uint16_t x, uint16_t y, uint16_t w, uint16_t h, const void*, const void*);
-    void drawCornerTest(uint8_t em = 0x01);
-	void	DrawRow8(int Row,std::function<bool(int,int)> GetBlack,std::function<bool(int,int)> GetRed,bool Finished);
-
+  	void	DrawRow8(int Row,std::function<bool(int,int)> GetBlack,std::function<bool(int,int)> GetRed,bool Finished);
+	void	FinishRowDrawing();
+	
     void Sleep()	{	_sleep();	}
     
   private:
@@ -100,14 +74,9 @@ class GxGDEW029Z10 : public GxEPD
 	void	DrawRow8(int Row,std::function<bool(int,int)> GetColour,uint8_t ColourCommand);
   private:
 
-    uint8_t _black_buffer[GxGDEW029Z10_BUFFER_SIZE];
-#if defined(ENABLE_RED)
-    uint8_t _red_buffer[GxGDEW029Z10_BUFFER_SIZE];
-#endif
+
     GxIO& IO;
-    int16_t _current_page;
-    bool _using_partial_mode;
-    bool _diag_enabled;
+     bool _diag_enabled;
     int8_t _rst;
     int8_t _busy;
 };
