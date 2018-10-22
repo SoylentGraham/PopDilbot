@@ -161,14 +161,24 @@ public:
 	bool	HasError()			{	return mError.length() > 0;	}
 
 	void	Push(char Char,TDebugFunc& Debug);
+
+	void	SetChunkedEncoding()
+	{
+		mChunkedEncoding = true;
+		mChunkLength = 0;
+		mChunkFirst = true;
+	}
+	void	OnReadContentByte()	{	mChunkLength--;	}
 	
 public:
-	LittleString<40>	mError;
+	LittleString<60>	mError;
 	bool	mGotInitialResponse = false;
 	String	mCurrentHeaderLine = String();
 	bool	mGotHeaders = false;
 	//String	mMimeType = String();
-	bool	mChunkedEncoding = false;
+	bool		mChunkedEncoding = false;
+	uint32_t	mChunkLength;
+	bool		mChunkFirst;	
 };
 
 
@@ -192,6 +202,19 @@ LittleString<SIZE>&	LittleString<SIZE>::Add(const char* Text)
 }
 	
 
+//	returns false if not ending with \r\n
+bool TrimLineFeed(String& Line)
+{
+	auto Length = Line.length();
+	if ( Length < 2 )
+		return false;
+	if ( Line[Length-1] != '\n' )
+		return false;
+	if ( Line[Length-2] != '\r' )
+		return false;
+	Line.remove( Length-2, 2 );
+	return true;
+}
 
 namespace TState
 {
@@ -232,6 +255,9 @@ public:
 		return TState::DisplayError;
 	}
 	
+	TDecodeResult::Type	EatChunkedHeader(THttpFetch& Fetch);
+	TDecodeResult::Type	ReadMoreHttpContentBytes(THttpFetch& Fetch);
+
 public:
 	LittleString<40>	mError;
 	const char*	mWifiSsid = nullptr;
@@ -277,8 +303,11 @@ TState::Type TApp::Update_GetGifUrl(bool FirstCall)
 	mGifUrl.mHost = "assets.amuniversal.com";
 	mGifUrl.mPath = "/a2bb8780a4c401365a02005056a9545d";
 
-	mGifUrl.mHost = "i.giphy.com";
-	mGifUrl.mPath = "/media/UaoxTrl8z1wre/giphy.gif";
+	//mGifUrl.mHost = "i.giphy.com";
+	//mGifUrl.mPath = "/media/UaoxTrl8z1wre/giphy.gif";
+	
+	mGifUrl.mHost = "assets.amuniversal.com";
+	mGifUrl.mPath = "/ac10d37065d50135e432005056a9545d";
 	
 	return TState::ConnectToGifUrl;
 }
@@ -372,6 +401,118 @@ TState::Type TApp::Update_GetGifHttpHeaders(bool FirstCall)
 }
 
 
+TDecodeResult::Type TApp::EatChunkedHeader(THttpFetch& Fetch)
+{
+	if ( !Fetch.mChunkedEncoding )
+		return TDecodeResult::Finished;
+
+	//	more of last chunk still to go
+	if ( Fetch.mChunkLength > 0 )
+		return TDecodeResult::Finished;
+	
+	//	if not the first header, we need to read the tailing \r\n
+	if ( !Fetch.mChunkFirst )
+	{
+		if ( mWebClient.available() < 2 )
+			return TDecodeResult::NeedMoreData;
+
+		auto TerminatorLineFeed = mWebClient.readStringUntil('\n');
+		TerminatorLineFeed+='\n';
+		if ( !TrimLineFeed(TerminatorLineFeed) )
+		{
+			Debug("Chunk tail didn't end with \\r\\n (maybe timeout?)");
+			return TDecodeResult::Error;
+		}
+		
+		//	this should now be zero length
+		if ( TerminatorLineFeed.length() != 0 )
+		{
+			Debug("Chunk tail length not zero");
+			return TDecodeResult::Error;
+		}
+	}
+	
+	//	blocking-read next chunk size
+	//	<lengthinhex>\r\n
+	auto ChunkHeader = mWebClient.readStringUntil('\n');
+	ChunkHeader+='\n';
+	if ( !TrimLineFeed(ChunkHeader) )
+	{
+		Debug("Chunk header didn't end with \\r\\n (maybe timeout?)");
+		return TDecodeResult::Error;
+	}
+	Fetch.mChunkFirst = false;
+
+	//	read new size
+	Fetch.mChunkLength = 0;
+	for ( int i=0;	i<ChunkHeader.length();	i++ )
+	{
+		auto NextByte = ChunkHeader[i];
+		//	not hex!
+		if ( NextByte >= 'A' && NextByte <= 'F' )
+			NextByte = (NextByte - 'A') + 0xA;
+		else if ( NextByte >= 'a' && NextByte <= 'f' )
+			NextByte = (NextByte - 'a') + 0xA;
+		else if ( NextByte >= '0' && NextByte <= '9' )
+			NextByte -= '0';
+		else
+		{
+			if ( NextByte == ';' )
+			{
+				Debug("Http chunked extensions not supported");
+				return TDecodeResult::Error;
+			}
+			Debug("GetChunkLength not hex");
+			return TDecodeResult::Error;
+		}
+
+		//	shift up last hex
+		Fetch.mChunkLength <<= 4;
+		Fetch.mChunkLength |= NextByte;
+	}
+
+	{
+		String DebugString;
+		DebugString += "Read next chunk length: ";
+		DebugString += IntToString( Fetch.mChunkLength );
+		Debug(DebugString.c_str());
+	}
+	return TDecodeResult::Finished;
+}
+
+
+TDecodeResult::Type TApp::ReadMoreHttpContentBytes(THttpFetch& Fetch)
+{
+	while ( true )
+	{
+		if ( !mWebClient.available() )
+			break;
+		if ( !mStreamBuffer.HasSpace() )
+			break;
+
+		auto ChunkResult = EatChunkedHeader(Fetch);
+		if ( ChunkResult != TDecodeResult::Finished )
+			return ChunkResult;
+	
+		char NextChar;
+		auto ReadCount = mWebClient.readBytes(&NextChar,1);
+		if ( ReadCount == 0 )
+		{
+			Debug("Unexpectedly read zero bytes from webclient");
+			return TDecodeResult::Error;
+		}
+		Fetch.OnReadContentByte();
+
+		if ( !mStreamBuffer.Push( NextChar ) )
+		{
+			Debug("Unexpectedly failed to push byte to streambuffer");
+			return TDecodeResult::Error;
+		}
+	}
+
+	return TDecodeResult::Finished;
+}
+
 TState::Type TApp::Update_ParseGif(bool FirstCall)
 {
 	if ( FirstCall )
@@ -383,26 +524,10 @@ TState::Type TApp::Update_ParseGif(bool FirstCall)
 	}
 
 	//	read more bytes into the stream buffer
-	while ( true )
-	{
-		if ( !mWebClient.available() )
-			break;
-		if ( !mStreamBuffer.HasSpace() )
-			break;
+	auto ReadResult = ReadMoreHttpContentBytes( mGifFetch );
+	if ( ReadResult == TDecodeResult::Error )
+		return OnError("Error reading more http content");
 
-		char NextChar;
-		auto ReadCount = mWebClient.readBytes(&NextChar,1);
-		if ( ReadCount == 0 )
-		{
-			Debug("Unexpectedly read zero bytes from webclient");
-			break;
-		}
-
-		if ( !mStreamBuffer.Push( NextChar ) )
-		{
-			return OnError("Unexpectedly failed to push byte to streambuffer");
-		}
-	}
 
 	auto DrawImageBlock = [](const TImageBlock& ImageBlock)
 	{
@@ -513,19 +638,6 @@ void TStateMachine<STATETYPE>::Update(TDebugFunc& Debug)
 	}
 }
 
-//	returns false if not ending with \r\n
-bool TrimLineFeed(String& Line)
-{
-	auto Length = Line.length();
-	if ( Length < 2 )
-		return false;
-	if ( Line[Length-1] != '\n' )
-		return false;
-	if ( Line[Length-2] != '\r' )
-		return false;
-	Line.remove( Length-2, 2 );
-	return true;
-}
 	
 void THttpFetch::Push(char Char,TDebugFunc& Debug)
 {
@@ -538,16 +650,23 @@ void THttpFetch::Push(char Char,TDebugFunc& Debug)
 	//	process current buffer
 	const char* ContentTypeKey = "Content-Type: ";
 	const char* ChunkedEncodingKey = "Transfer-Encoding: chunked";
-	const char* Response200Key = "HTTP/1.1 200";
+	const char* Response11_200Key = "HTTP/1.1 200";
+	const char* Response10_200Key = "HTTP/1.0 200";
 
 	//	waiting for initial response
 	if ( !mGotInitialResponse )
 	{
-		if ( !mCurrentHeaderLine.startsWith(Response200Key) )
+		if ( mCurrentHeaderLine.startsWith(Response11_200Key) )
 		{
-			mError = "Response was not ";
-			mError.Add(Response200Key);
-			mError.Add(": ");
+			
+		}
+		else if ( mCurrentHeaderLine.startsWith(Response10_200Key) )
+		{
+			
+		}
+		else
+		{
+			mError = "Unxpected http response: ";
 			mError.Add(mCurrentHeaderLine);
 			return;
 		}
@@ -565,7 +684,7 @@ void THttpFetch::Push(char Char,TDebugFunc& Debug)
 	//	process header line
 	if ( mCurrentHeaderLine.startsWith(ChunkedEncodingKey) )
 	{
-		mChunkedEncoding = true;
+		SetChunkedEncoding();
 	}
 	else if ( mCurrentHeaderLine.startsWith(ContentTypeKey) )
 	{		

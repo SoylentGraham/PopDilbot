@@ -137,14 +137,14 @@ TDecodeResult::Type Gif::THeader::ParseHeader(TCallbacks& Callbacks)
 	auto HasPalette = (Flags >> 7) & BITCOUNT(1);
 	//auto ColourRes = (Flags >> 6) & BITCOUNT(3);
 	//auto SortPalette = (Flags >> 3) & BITCOUNT(1);
-	mPaletteSize = (Flags >> 0) & BITCOUNT(3);
-	mPaletteSize = 2 << (mPaletteSize);	//	2 ^ (1+N)
+	mPalette.mSize = (Flags >> 0) & BITCOUNT(3);
+	mPalette.mSize = 2 << (mPalette.mSize);	//	2 ^ (1+N)
 	
 	mTransparentPaletteIndex = HeaderBytes[11];
 	//auto AspectRatio = HeaderBytes[12];
 
 	//	read palette
-	if ( HasPalette && mPaletteSize == 0 )
+	if ( HasPalette && mPalette.mSize == 0 )
 	{
 		OnError("Flagged as having a global palette size, and palette size is 0");
 		return TDecodeResult::Error;
@@ -152,7 +152,7 @@ TDecodeResult::Type Gif::THeader::ParseHeader(TCallbacks& Callbacks)
 	else if ( !HasPalette )
 	{
 		//	the shift means this will always be non-zero, so reset
-		mPaletteSize = 0;
+		mPalette.mSize = 0;
 	}
 
 	{
@@ -161,7 +161,7 @@ TDecodeResult::Type Gif::THeader::ParseHeader(TCallbacks& Callbacks)
 		Debug += "x";
 		Debug += IntToString( static_cast<int>(mHeight) );
 		Debug += ". Global palette size: ";
-		Debug += IntToString( static_cast<int>(mPaletteSize) );
+		Debug += IntToString( static_cast<int>(mPalette.mSize) );
 		OnDebug( Debug.c_str() );
 	}
 	
@@ -175,7 +175,7 @@ TDecodeResult::Type Gif::THeader::ParseGlobalPalette(TCallbacks& Callbacks)
 	
 	//	read palette
 	auto* Palette8 = &mPalette.mColours[0].r;
-	if ( !StreamBuffer.Pop( Palette8, static_cast<int>( sizeof(TRgb8)*mPaletteSize) ) )
+	if ( !StreamBuffer.Pop( Palette8, static_cast<int>( sizeof(TRgb8)*mPalette.mSize) ) )
 		return TDecodeResult::NeedMoreData;
 	
 	return TDecodeResult::Finished;

@@ -41,8 +41,6 @@ void OutputGif(const std::vector<uint8_t>& GifData_)
 	
 	auto DrawImageBlock = [](const TImageBlock& ImageBlock)
 	{
-		//if ( ImageBlock.mTop % 4 != 0 )
-		//	return;
 		//	draw colours
 		auto DrawColor = [&](TRgba8 Colour)
 		{
@@ -94,9 +92,11 @@ void OutputGif(const std::vector<uint8_t>& GifData_)
 			rgba.a = 1;
 			DrawColor( rgba );
 		};
-		auto SubSample = 1;
-		//auto Width = std::min<int>( ImageBlock.mWidth, 240*SubSample );
-		auto Width = std::min<int>( ImageBlock.mWidth, 200 );
+		auto SubSample = 2;
+		if ( ImageBlock.mTop % SubSample != 0 )
+			return;
+		auto Width = std::min<int>( ImageBlock.mWidth, 400*SubSample );
+		//auto Width = std::min<int>( std::min<int>( ImageBlock.mWidth, 240*SubSample ), 200 );
 		
 		for ( int x=0;	x<Width;	x+=SubSample )
 		{
@@ -142,11 +142,12 @@ void OutputGif(const std::vector<uint8_t>& GifData_)
 			for ( int i=0;	i<100 && GifData.size()>0;	i++ )
 			{
 				auto Byte = GifData[0];
-				GifData.erase( GifData.begin() );
 				if ( !StreamBuffer.Push(Byte) )
 				{
-					throw std::runtime_error("Streambuffer overflowed");
+					//throw std::runtime_error("Streambuffer overflowed");
+					break;
 				}
+				GifData.erase( GifData.begin() );
 			}
 		}
 		
@@ -208,7 +209,10 @@ int main(int argc, const char * argv[])
 		};
 		//
 		//GetUrl("https://assets.amuniversal.com/985bb260a4c401365a02005056a9545d",OnDownloaded);
-		GetUrl("http://i.giphy.com/media/UaoxTrl8z1wre/giphy.gif",OnDownloaded);
+		//GetUrl("http://i.giphy.com/media/UaoxTrl8z1wre/giphy.gif",OnDownloaded);
+		GetUrl("http://assets.amuniversal.com/ac10d37065d50135e432005056a9545d",OnDownloaded);
+
+		
 		
 		while ( !Downloaded )
 		{

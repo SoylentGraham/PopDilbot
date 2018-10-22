@@ -51,7 +51,7 @@ namespace Lzw
 
 class TStreamBuffer
 {
-	static const size_t BUFFERSIZE = 1000;
+	static const size_t BUFFERSIZE = 900;
 public:
 	bool	Push(uint8_t Data);
 	bool	Pop(uint8_t* Data,size_t DataSize);
@@ -127,13 +127,13 @@ class TPalette
 {
 public:
 	TRgb8		mColours[256];
+	uint16_t	mSize;			//	8 bit, but shifts to 256 as counter!
 };
 
 class TPendingImageBlock
 {
 public:
-	uint8_t			mPaletteSize;
-	//TPalette		mPalette;
+	TPalette		mPalette;
 	uint16_t		mCurrentRow;
 	Lzw::Decoder	mLzwDecoder;
 	
@@ -183,7 +183,6 @@ public:
 public:
 	bool		mHasPendingImageBlock = false;
 	bool		mGotHeader = false;
-	uint8_t		mPaletteSize;
 	uint8_t		mTransparentPaletteIndex;
 	bool		mGotPalette = false;
 	uint8_t		mPendingExtensionBlockType = 0x0;	//	when non zero, we're eating chunks from the block
