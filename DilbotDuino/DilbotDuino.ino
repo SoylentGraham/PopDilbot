@@ -85,8 +85,8 @@ GxEPD_Class display(io,1,10); // default selection of D4(=2), D2(=4)
 #endif
 
 //#define DEBUG_DISPLAY
-#define RESIZE_IMAGE_TO_SCREEN	false
-#define DISPLAY_TEST_IMAGE	true
+#define RESIZE_IMAGE_TO_SCREEN	true
+#define DISPLAY_TEST_IMAGE	false
 
 #if !defined(DISPLAY_ENABLED)
 #define GxEPD_WHITE	' '
@@ -318,8 +318,8 @@ TState::Type TApp::Update_GetGifUrl(bool FirstCall)
 	mGifUrl.mPath = "/media/UaoxTrl8z1wre/giphy.gif";
 
 	//	oh no!
-	mGifUrl.mHost = "assets.amuniversal.com";
-	mGifUrl.mPath = "/ac10d37065d50135e432005056a9545d";
+	//mGifUrl.mHost = "assets.amuniversal.com";
+	//mGifUrl.mPath = "/ac10d37065d50135e432005056a9545d";
 	
 	return TState::ConnectToGifUrl;
 }
@@ -537,7 +537,7 @@ public:
 			return false;
 		auto Byte = mBuffer[ByteIndex];
 		//Serial.println( String(Byte) + String(" & 1<<") + String(Bit) );
-		Bit %= 8;
+		Bit = Bit % 8;
 		Byte &= (1<<Bit);
 		return Byte != 0;
 	}
@@ -549,9 +549,10 @@ public:
 		if ( ByteIndex >= BITCOUNT/8 )
 			return false;
 		auto Byte = mBuffer[ByteIndex];
-		Bit %= 8;
+		Bit = Bit % 8;
 		Byte &= (1<<Bit);
-		Byte |= (Set<<Bit);
+		if ( Set )
+			Byte |= 1<<Bit;
 		mBuffer[ByteIndex] = Byte;
 		return true;
 	}
@@ -560,6 +561,23 @@ public:
 	{
 		for ( int i=0;	i<BITCOUNT/8;	i++ )
 			mBuffer[i] = Value;
+	}
+	
+	void Debug()
+	{
+		String Bytes;
+		for ( int i=0;	i<BITCOUNT/8;	i++ )
+		{
+			auto Byte = mBuffer[i];
+			auto a = (Byte >> 8)  & 0x0f;
+			auto b = (Byte >> 0)  & 0x0f;
+			if ( a >= 10 )	Bytes += 'a'+(a-10); 
+			else			Bytes += '0'+(a); 
+			if ( b >= 10 )	Bytes += 'a'+(b-10); 
+			else			Bytes += '0'+(b); 
+			Bytes += ' ';
+		}
+		Serial.println(Bytes);
 	}
 	
 public:
@@ -573,6 +591,7 @@ class TBitGrid : public TBitBuffer<WIDTH*HEIGHT>
 public:
 	bool	Get(int x,int y)
 	{
+		//Serial.println( String("grid get(") + String(x) + String(",") + String(y) );
 		int i = x + (y*WIDTH);
 		return TBitBuffer<WIDTH*HEIGHT>::Get(i);
 	}
@@ -581,6 +600,7 @@ public:
 		int i = x + (y*WIDTH);
 		return TBitBuffer<WIDTH*HEIGHT>::Set(i,Set);
 	}
+
 };
 
 TBitGrid<GxGDEW029Z10_HEIGHT,8> BlackRowBuffer;
@@ -588,36 +608,46 @@ TBitGrid<GxGDEW029Z10_HEIGHT,8> RedRowBuffer;
 
 bool GetBlack(int x,int y)
 {
-	y %= 8;
-	//Serial.println( String(x) + String(",") + String(y) );
+	y = y % 8;
+	//Serial.println( String("GetBlack(") + String(x) + String(",") + String(y) );
 	return BlackRowBuffer.Get( x, y );
 }
 
 bool GetRed(int x,int y)
 {
-	y %= 8;
+	y = y % 8;
 	return RedRowBuffer.Get( x, y );
 }
 
-auto DrawColor = [&](int x,int y,TRgba8 Colour)
+void DrawColor(int x,int y,TRgba8 Colour)
 {
+	y = y % 8;
+	BlackRowBuffer.Set( x, y, true );
+	RedRowBuffer.Set( x, y, false );
+	return;	
 	//Serial.print( String(x) + String(",") + String(y) + String("  ") );
 	
 	y %= 8;
-	auto Luma = std::max( Colour.r, std::max( Colour.g, Colour.b ) );
-	if ( Luma > 120 )
+
+	float r = Colour.r/255.f;
+	float g = Colour.g/255.f;
+	float b = Colour.b/255.f;
+	float Lumaf = 0.2126f*r + 0.7152f*g + 0.0722*b;
+	//auto Luma = std::max( Colour.r, std::max( Colour.g, Colour.b ) );
+	int Luma = Lumaf * 255.0f;	
+	
+	if ( Luma > 200 )
 	{
 		//display.drawPixel( x, y, GxEPD_WHITE );
 		BlackRowBuffer.Set( x, y, false );
 		RedRowBuffer.Set( x, y, false );
 	}
-	/*
 	else if ( Luma > 120 )
 	{
 		//display.drawPixel( x, y, GxEPD_RED );
 		BlackRowBuffer.Set( x, y, false );
 		RedRowBuffer.Set( x, y, true );
-	}*/
+	}
 	else
 	{
 		//display.drawPixel( x, y, GxEPD_BLACK );
@@ -691,6 +721,7 @@ TState::Type TApp::Update_ParseGif(bool FirstCall)
 			r /= SubSample;
 			g /= SubSample;
 			b /= SubSample;
+			//Serial.print( String(sx) + String(" ") );
 			DrawColor( sx, sy, TRgba8(r,g,b,255) );
 		}
 		//	last of 8, update display
@@ -698,11 +729,12 @@ TState::Type TApp::Update_ParseGif(bool FirstCall)
 		{
 			//auto Last = ( sy == display.height()-1 );
 			bool Last = false;
-			Debug( (String("Drawing row ") + String(sy)).c_str() );
+			//Debug( (String("Drawing row ") + String(sy)).c_str() );
+			BlackRowBuffer.Debug();
 			display.DrawRow8( sy, GetBlack, GetRed, Last );
 		}
 		
-		Serial.println();
+		//Serial.println();
 	};	
 
 	TCallbacks Callbacks( mStreamBuffer );

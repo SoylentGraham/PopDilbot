@@ -120,6 +120,9 @@ void GxGDEW029Z10::DrawRow8(int Row,std::function<bool(int,int)> GetColour,uint8
 	int y = 8 * Row8;
   	int x = 8 * 0;
 
+	if ( y >= GxGDEW029Z10_WIDTH )
+		return;
+Serial.println( String("DrawRow8(") + String(Row) );
 	//	enter partial window mode
 	IO.writeCommandTransaction(0x91); 
 
@@ -143,7 +146,7 @@ void GxGDEW029Z10::DrawRow8(int Row,std::function<bool(int,int)> GetColour,uint8
 	//y = YTop;
 	_writeCommand(ColourCommand);
 	//for ( int i=0; i < GxGDEW029Z10_BUFFER_SIZE; i++)
-	for ( int i=0; i <Rows*Columns; i++)
+	for ( int i=0; i <Rows*1; i++)
 	{
 		//	accumulate black, then write opposite so we have a nicer api
 		uint8_t Column = 0x0;
