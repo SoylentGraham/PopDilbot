@@ -51,7 +51,7 @@ namespace Lzw
 
 class TStreamBuffer
 {
-	static const size_t BUFFERSIZE = 900;
+	static const size_t BUFFERSIZE = 1000;
 public:
 	bool	Push(uint8_t Data);
 	bool	Pop(uint8_t* Data,size_t DataSize);
@@ -170,6 +170,20 @@ public:
 class Gif::THeader
 {
 public:
+	THeader()
+	{
+		Reset();
+	}
+	void		Reset()
+	{
+		mHasPendingImageBlock = false;
+		mGotHeader = false;
+		mGotPalette = false;
+		mPendingExtensionBlockType = 0x0;	//	when non zero, we're eating chunks from the block
+		mWidth = 0;
+		mHeight = 0;
+	}
+	
 	TDecodeResult::Type		ParseHeader(TCallbacks& Callbacks);
 	TDecodeResult::Type		ParseGlobalPalette(TCallbacks& Callbacks);
 
@@ -181,10 +195,10 @@ public:
 	TDecodeResult::Type		ParseExtensionBlockChunk(TStreamBuffer& StreamBuffer);
 
 public:
-	bool		mHasPendingImageBlock = false;
-	bool		mGotHeader = false;
+	bool		mHasPendingImageBlock;
+	bool		mGotHeader;
 	uint8_t		mTransparentPaletteIndex;
-	bool		mGotPalette = false;
+	bool		mGotPalette;
 	uint8_t		mPendingExtensionBlockType = 0x0;	//	when non zero, we're eating chunks from the block
 	uint16_t	mWidth;
 	uint16_t	mHeight;

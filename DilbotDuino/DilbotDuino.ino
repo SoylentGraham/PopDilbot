@@ -101,7 +101,16 @@ public:
 	void	fillScreen(int)		{}
 	void	setRotation(int)	{}
 	void	update()			{}
-	void	drawPixel(int,int,char p)	{	Serial.print(p);	}
+	int		width()				{	return 296;	}
+	int		height()			{	return 128;	}
+	void	drawPixel(int,int y,char p)	
+	{
+		if ( LastY != y )
+			Serial.println();
+		LastY = y;		
+		Serial.print(p);
+	}
+	int LastY = -1;
 };
 TDisplayStub display;
 #endif
@@ -300,12 +309,15 @@ TState::Type TApp::Update_ConnectWifi(bool FirstCall)
 
 TState::Type TApp::Update_GetGifUrl(bool FirstCall)
 {
+	//	dilbert
 	mGifUrl.mHost = "assets.amuniversal.com";
 	mGifUrl.mPath = "/a2bb8780a4c401365a02005056a9545d";
 
-	//mGifUrl.mHost = "i.giphy.com";
-	//mGifUrl.mPath = "/media/UaoxTrl8z1wre/giphy.gif";
-	
+	//	nyan cat
+	mGifUrl.mHost = "i.giphy.com";
+	mGifUrl.mPath = "/media/UaoxTrl8z1wre/giphy.gif";
+
+	//	oh no!
 	mGifUrl.mHost = "assets.amuniversal.com";
 	mGifUrl.mPath = "/ac10d37065d50135e432005056a9545d";
 	
@@ -519,7 +531,7 @@ TState::Type TApp::Update_ParseGif(bool FirstCall)
 	{
 		Debug("Initialising gif setup");
 		mStreamBuffer = TStreamBuffer();
-		//mGifHeader = Gif::THeader();
+		mGifHeader.Reset();
 		display.fillScreen(GxEPD_WHITE);
 	}
 
@@ -528,11 +540,26 @@ TState::Type TApp::Update_ParseGif(bool FirstCall)
 	if ( ReadResult == TDecodeResult::Error )
 		return OnError("Error reading more http content");
 
-
+	
 	auto DrawImageBlock = [](const TImageBlock& ImageBlock)
 	{
+		auto SubSample = 1;
+		{
+			//	this is assuming ImageBlock always starts at 0,0
+			if ( ImageBlock.mWidth > display.width() )
+				SubSample = ImageBlock.mWidth / display.width();
+			SubSample = std::max<int>( 1, SubSample );
+			//String DebugString = "Set subsample to " + IntToString(SubSample);
+			//Debug(DebugString.c_str());
+		}
+		if ( (ImageBlock.mTop % SubSample) != 0 )
+			return;
+			
 		auto DrawColor = [&](int x,int y,TRgba8 Colour)
 		{
+			if ( x >= display.width() )		return;
+			if ( y >= display.height() )	return;
+			
 			auto Luma = std::max( Colour.r, std::max( Colour.g, Colour.b ) );
 			if ( Luma > 200 )
 				display.drawPixel( x, y, GxEPD_WHITE );
@@ -542,14 +569,18 @@ TState::Type TApp::Update_ParseGif(bool FirstCall)
 				display.drawPixel( x, y, GxEPD_BLACK );
 		};
 
-		for ( int y=0;	y<ImageBlock.mHeight;	y++ )
-		for ( int x=0;	x<ImageBlock.mWidth;	x++ )
+		int sy=ImageBlock.mTop/SubSample;
+		//	todo: block position
+		//for ( int sx=ImageBlock.mleft/SubSample;	sx<display.width();	sx++ )
+		for ( int sx=0;	sx<display.width();	sx++ )
 		{
-			auto p0 = ImageBlock.mPixels[x];
-			auto Colour0 = ImageBlock.GetColour(p0);
-			DrawColor( x, y, Colour0 );
+			//	todo: subsample here
+			int px0 = std::min<int>( sx * SubSample, display.width()-1 );
+			auto c0 = ImageBlock.mPixels[px0];
+			auto Colour0 = ImageBlock.GetColour(c0);
+			DrawColor( sx, sy, Colour0 );
 		}
-		Serial.println();
+		//Serial.println();
 	};	
 
 	TCallbacks Callbacks( mStreamBuffer );
