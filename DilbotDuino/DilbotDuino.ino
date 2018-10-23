@@ -87,6 +87,8 @@ GxEPD_Class display(io,1,10); // default selection of D4(=2), D2(=4)
 //#define DEBUG_DISPLAY
 #define RESIZE_IMAGE_TO_SCREEN	true
 #define DISPLAY_TEST_IMAGE	false
+#define SLEEP_AFTER_DISPLAY_GIF_SECS	(12*60*60)
+#define SLEEP_AFTER_DISPLAY_TEST_SECS	(20)
 
 #if !defined(DISPLAY_ENABLED)
 #define GxEPD_WHITE	' '
@@ -314,12 +316,12 @@ TState::Type TApp::Update_GetGifUrl(bool FirstCall)
 	mGifUrl.mPath = "/a2bb8780a4c401365a02005056a9545d";
 
 	//	nyan cat
-	mGifUrl.mHost = "i.giphy.com";
-	mGifUrl.mPath = "/media/UaoxTrl8z1wre/giphy.gif";
+	//mGifUrl.mHost = "i.giphy.com";
+	//mGifUrl.mPath = "/media/UaoxTrl8z1wre/giphy.gif";
 
 	//	oh no!
-	//mGifUrl.mHost = "assets.amuniversal.com";
-	//mGifUrl.mPath = "/ac10d37065d50135e432005056a9545d";
+	mGifUrl.mHost = "assets.amuniversal.com";
+	mGifUrl.mPath = "/ac10d37065d50135e432005056a9545d";
 	
 	return TState::ConnectToGifUrl;
 }
@@ -604,7 +606,10 @@ public:
 };
 
 TBitGrid<GxGDEW029Z10_HEIGHT,8> BlackRowBuffer;
+#define ENABLE_RED
+#if defined(ENABLE_RED)
 TBitGrid<GxGDEW029Z10_HEIGHT,8> RedRowBuffer;
+#endif
 
 bool GetBlack(int x,int y)
 {
@@ -615,16 +620,24 @@ bool GetBlack(int x,int y)
 
 bool GetRed(int x,int y)
 {
+	#if defined(ENABLE_RED)
 	y = y % 8;
 	return RedRowBuffer.Get( x, y );
+	#else
+	return false;
+	#endif
 }
 
 void DrawColor(int x,int y,TRgba8 Colour)
 {
+	/*
 	y = y % 8;
+	Serial.print( String(x) + String(",") + String(y) + String("  ") );
 	BlackRowBuffer.Set( x, y, true );
+	#if defined(ENABLE_RED)
 	RedRowBuffer.Set( x, y, false );
-	return;	
+	#endif
+	*/
 	//Serial.print( String(x) + String(",") + String(y) + String("  ") );
 	
 	y %= 8;
@@ -636,13 +649,13 @@ void DrawColor(int x,int y,TRgba8 Colour)
 	//auto Luma = std::max( Colour.r, std::max( Colour.g, Colour.b ) );
 	int Luma = Lumaf * 255.0f;	
 	
-	if ( Luma > 200 )
+	if ( Luma > 180 )
 	{
 		//display.drawPixel( x, y, GxEPD_WHITE );
 		BlackRowBuffer.Set( x, y, false );
 		RedRowBuffer.Set( x, y, false );
 	}
-	else if ( Luma > 120 )
+	else if ( Luma > 110 )
 	{
 		//display.drawPixel( x, y, GxEPD_RED );
 		BlackRowBuffer.Set( x, y, false );
@@ -654,6 +667,7 @@ void DrawColor(int x,int y,TRgba8 Colour)
 		BlackRowBuffer.Set( x, y, true );
 		RedRowBuffer.Set( x, y, false );
 	}
+	
 };
 
 TState::Type TApp::Update_ParseGif(bool FirstCall)
@@ -665,7 +679,9 @@ TState::Type TApp::Update_ParseGif(bool FirstCall)
 		mGifHeader.Reset();
 
 		BlackRowBuffer.Clear(0);
+		#if defined(ENABLE_RED)
 		RedRowBuffer.Clear(0);
+		#endif
 	}
 
 	//	read more bytes into the stream buffer
@@ -730,7 +746,7 @@ TState::Type TApp::Update_ParseGif(bool FirstCall)
 			//auto Last = ( sy == display.height()-1 );
 			bool Last = false;
 			//Debug( (String("Drawing row ") + String(sy)).c_str() );
-			BlackRowBuffer.Debug();
+			//BlackRowBuffer.Debug();
 			display.DrawRow8( sy, GetBlack, GetRed, Last );
 		}
 		
@@ -773,17 +789,23 @@ TState::Type TApp::Update_ParseGif(bool FirstCall)
 TState::Type TApp::Update_DisplayTest(bool FirstCall)
 {
 	BlackRowBuffer.Clear(0);
+	#if defined(ENABLE_RED)
 	RedRowBuffer.Clear(0);
+	#endif
 
-	BlackRowBuffer.Set( 1,1, true );
-	BlackRowBuffer.Set( 2,2, true );
-	BlackRowBuffer.Set( 3,3, true );
-	RedRowBuffer.Set( 6,2, true );
-	RedRowBuffer.Set( 6,3, true );
-	RedRowBuffer.Set( 6,4, true );
-	RedRowBuffer.Set( 6,5, true );
-	RedRowBuffer.Set( 6,6, true );
+	TRgba8 Black(0,0,0);
+	TRgba8 Red(255,0,0);
 
+	DrawColor( 1,1, Black );
+	DrawColor( 2,2, Black );
+	DrawColor( 3,3, Black );
+	#if defined(ENABLE_RED)
+	DrawColor( 6,2, Red );
+	DrawColor( 6,3, Red );
+	DrawColor( 6,4, Red );
+	DrawColor( 6,5, Red );
+	DrawColor( 6,6, Red );
+#endif
 	/*
 	#define WHITE	0
 	#define RED		1
@@ -815,9 +837,8 @@ TState::Type TApp::Update_DisplayTest(bool FirstCall)
 		display.DrawRow8( y, GetBlack, GetRed, Last );
 	}
 	
-	auto SleepAfterDisplaySecs = 30;
 	Debug("Now sleeping for X secs");
-	delay( 1000 * SleepAfterDisplaySecs );
+	delay( 1000 * SLEEP_AFTER_DISPLAY_TEST_SECS );
 
 	return TState::ConnectToWifi;
 }
@@ -836,10 +857,9 @@ TState::Type TApp::Update_DisplayGif(bool FirstCall)
 		Debug("Refreshing display");
 		display.update();
 		*/
-		auto SleepAfterDisplaySecs = 30;
 		Debug("Now sleeping for X secs");
 		display.Sleep();
-		delay( 1000 * SleepAfterDisplaySecs );
+		delay( 1000 * SLEEP_AFTER_DISPLAY_GIF_SECS );
 	}
 
 	return TState::DisplayTest;
