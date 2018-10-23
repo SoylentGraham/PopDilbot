@@ -340,8 +340,9 @@ TState::Type TApp::Update_GetGifUrl(bool FirstCall)
 	mGifUrl.mHost = "assets.amuniversal.com";
 	mGifUrl.mPath = "/ac10d37065d50135e432005056a9545d";
 
-	mGifUrl.mHost = "pbs.twimg.com";
-	mGifUrl.mPath = "/media/DN-0Y7LWsAIkkKs.gif:small";
+	//	actually a png on twitter :/
+	//mGifUrl.mHost = "pbs.twimg.com";
+	//mGifUrl.mPath = "/media/DN-0Y7LWsAIkkKs.gif:small";
 	
 	return TState::ConnectToGifUrl;
 }
