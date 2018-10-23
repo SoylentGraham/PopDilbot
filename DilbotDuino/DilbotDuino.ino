@@ -550,7 +550,7 @@ public:
 			return false;
 		auto Byte = mBuffer[ByteIndex];
 		Bit = Bit % 8;
-		Byte &= (1<<Bit);
+		Byte &= ~(1<<Bit);
 		if ( Set )
 			Byte |= 1<<Bit;
 		mBuffer[ByteIndex] = Byte;
