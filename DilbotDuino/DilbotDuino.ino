@@ -89,6 +89,10 @@ GxEPD_Class display(io,1,10); // default selection of D4(=2), D2(=4)
 #define DISPLAY_TEST_IMAGE	false
 #define SLEEP_AFTER_DISPLAY_GIF_SECS	(12*60*60)
 #define SLEEP_AFTER_DISPLAY_TEST_SECS	(20)
+#define SLEEP_AFTER_DISPLAY_ERROR_SECS	(60*10)
+#define BLINK_ON_STATECHANGE
+
+	
 
 #if !defined(DISPLAY_ENABLED)
 #define GxEPD_WHITE	' '
@@ -120,6 +124,19 @@ TDisplayStub display;
 #define ROTATION_90		1
 #define ROTATION_180	2
 #define ROTATION_270	3
+
+
+void Blink(int Count=10)
+{
+	pinMode(LED_BUILTIN, OUTPUT);
+	for ( int i=0;	i<Count;	i++ )
+	{
+		digitalWrite(LED_BUILTIN, HIGH);
+ 		delay(30);
+		digitalWrite(LED_BUILTIN, LOW);
+ 		delay(30);
+	}
+}
 
 
 template<size_t SIZE>
@@ -322,6 +339,9 @@ TState::Type TApp::Update_GetGifUrl(bool FirstCall)
 	//	oh no!
 	mGifUrl.mHost = "assets.amuniversal.com";
 	mGifUrl.mPath = "/ac10d37065d50135e432005056a9545d";
+
+	mGifUrl.mHost = "pbs.twimg.com";
+	mGifUrl.mPath = "/media/DN-0Y7LWsAIkkKs.gif:small";
 	
 	return TState::ConnectToGifUrl;
 }
@@ -845,8 +865,54 @@ TState::Type TApp::Update_DisplayTest(bool FirstCall)
 
 TState::Type TApp::Update_DisplayError(bool FirstCall)
 {
-	Debug("Error, but displaying anyway");
-	return Update_DisplayGif(FirstCall);
+	#define WHITE	0
+	#define RED		1
+	#define BLACK	2
+	auto GetColour = [](int x,int y)
+	{
+		//	little X's
+		{
+			const int Xsize = 40;
+			auto xx = x % Xsize;
+			auto xy = y % Xsize;
+			if ( xx == xy )
+				return BLACK;
+			if ( Xsize-xx == xy )
+				return BLACK;
+		}
+
+		//	chequer
+		{
+			const int Csize = 10;
+			auto cx = x % Csize;
+			auto cy = y % Csize;
+			auto xodd = cx < (Csize/2);
+			auto yodd = cy < (Csize/2);
+			if ( xodd == yodd )
+				return RED;
+		}
+		return WHITE;
+	};
+
+	auto GetBlack = [&](int x,int y)
+	{
+		return GetColour(x,y) == BLACK;
+	};
+	auto GetRed = [&](int x,int y)
+	{
+		return GetColour(x,y) == RED;
+	};
+
+	for ( int y=0;	y<display.height();	y+=8 )
+	{
+		auto Last = y == display.height()-8;
+		display.DrawRow8( y, GetBlack, GetRed, Last );
+	}
+	
+	Debug("Now sleeping for X secs");
+	delay( 1000 * SLEEP_AFTER_DISPLAY_ERROR_SECS );
+
+	return TState::ConnectToWifi;
 }
 
 TState::Type TApp::Update_DisplayGif(bool FirstCall)
@@ -905,6 +971,10 @@ void TStateMachine<STATETYPE>::Update(TDebugFunc& Debug)
 	{
 		mCurrentState = NewState;
 		mCurrentStateFirstCall = true;
+
+		#if defined(BLINK_ON_STATECHANGE)
+		Blink();
+		#endif
 	}
 }
 
@@ -1001,10 +1071,16 @@ TStateMachine<TState::Type> AppState;
 
 void setup()
 {
+	while ( !Serial )
+	{}
 	#define SERIAL_BAUD	57600
 	delay(1000);
 	Serial.begin(SERIAL_BAUD);
 	Serial.println();
+
+	#if defined(BLINK_ON_STATECHANGE)
+	Blink(5);
+	#endif
 
 	#if defined(DEBUG_DISPLAY)
 	for (int i=0;	i<5;	i++ )
@@ -1014,6 +1090,7 @@ void setup()
 		delay(1000);
 	}
 	#endif
+
 	
 	Serial.println("Initialising display...");
 	display.init(SERIAL_BAUD);	// enable diagnostic output on Serial
